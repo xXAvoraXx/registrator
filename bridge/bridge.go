@@ -122,7 +122,14 @@ func (b *Bridge) Sync(quiet bool) {
 
 	extServices, err := b.registry.Services()
 	if err == nil {
-		b.seedServiceHashes(extServices)
+		managedServices := make([]*Service, 0, len(extServices))
+		for _, extService := range extServices {
+			if !isRegistratorManagedService(extService) {
+				continue
+			}
+			managedServices = append(managedServices, extService)
+		}
+		b.seedServiceHashes(managedServices)
 	} else {
 		log.Println("unable to list backend services during sync:", err)
 	}
@@ -205,7 +212,14 @@ func (b *Bridge) Sync(quiet bool) {
 				preferredIDs[service.ID] = struct{}{}
 			}
 		}
-		duplicateIDs := duplicateServiceIDs(extServices, preferredIDs)
+		managedExtServices := make([]*Service, 0, len(extServices))
+		for _, extService := range extServices {
+			if !isRegistratorManagedService(extService) {
+				continue
+			}
+			managedExtServices = append(managedExtServices, extService)
+		}
+		duplicateIDs := duplicateServiceIDs(managedExtServices, preferredIDs)
 		duplicateSet := make(map[string]struct{}, len(duplicateIDs))
 		if len(duplicateIDs) > 0 {
 			for _, duplicateID := range duplicateIDs {
@@ -227,6 +241,9 @@ func (b *Bridge) Sync(quiet bool) {
 
 	Outer:
 		for _, extService := range extServices {
+			if !isRegistratorManagedService(extService) {
+				continue
+			}
 			if _, duplicate := duplicateSet[extService.ID]; duplicate {
 				continue
 			}
@@ -813,6 +830,7 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 	if len(port.NetworkNames) > 0 {
 		service.Tags = append(service.Tags, port.NetworkNames...)
 	}
+	service.Tags = ensureTag(service.Tags, registratorManagedTag)
 
 	id := mapDefault(metadata, "id", "")
 	if id != "" {

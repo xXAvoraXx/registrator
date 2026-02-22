@@ -8,6 +8,8 @@ import (
 	dockerapi "github.com/fsouza/go-dockerclient"
 )
 
+const registratorManagedTag = "registrator"
+
 func retry(fn func() error) error {
 	return backoff.Retry(fn, backoff.NewExponentialBackOff())
 }
@@ -52,6 +54,26 @@ func combineTags(tagParts ...string) []string {
 		tags = append(tags, recParseEscapedComma(element)...)
 	}
 	return tags
+}
+
+func hasTag(tags []string, tag string) bool {
+	for _, existing := range tags {
+		if strings.EqualFold(strings.TrimSpace(existing), tag) {
+			return true
+		}
+	}
+	return false
+}
+
+func ensureTag(tags []string, tag string) []string {
+	if hasTag(tags, tag) {
+		return tags
+	}
+	return append(tags, tag)
+}
+
+func isRegistratorManagedService(service *Service) bool {
+	return service != nil && hasTag(service.Tags, registratorManagedTag)
 }
 
 func serviceMetaData(config *dockerapi.Config, port string) (map[string]string, map[string]bool) {

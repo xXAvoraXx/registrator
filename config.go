@@ -136,6 +136,7 @@ func applyCLIOverrides(cfg *AppConfig, args []string) error {
 	runtimeRetryAttempts := fs.Int("REGISTRATOR_RUNTIME_RETRY_ATTEMPTS", cfg.Runtime.RetryAttempts, "")
 	runtimeRetryIntervalMs := fs.Int("REGISTRATOR_RUNTIME_RETRY_INTERVAL_MS", cfg.Runtime.RetryIntervalMs, "")
 	runtimeResyncInterval := fs.Int("REGISTRATOR_RUNTIME_RESYNC_INTERVAL", cfg.Runtime.ResyncInterval, "")
+	runtimeManagerAPIPort := fs.Int("REGISTRATOR_RUNTIME_MANAGER_API_PORT", cfg.Runtime.ManagerAPIPort, "")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -177,6 +178,7 @@ func applyCLIOverrides(cfg *AppConfig, args []string) error {
 	cfg.Runtime.RetryAttempts = *runtimeRetryAttempts
 	cfg.Runtime.RetryIntervalMs = *runtimeRetryIntervalMs
 	cfg.Runtime.ResyncInterval = *runtimeResyncInterval
+	cfg.Runtime.ManagerAPIPort = *runtimeManagerAPIPort
 
 	if extra := fs.Args(); len(extra) > 0 {
 		return fmt.Errorf("unexpected argument: %s", extra[0])
@@ -265,6 +267,11 @@ func applyEnvOverrides(cfg *AppConfig) {
 	if v := os.Getenv("REGISTRATOR_RUNTIME_RESYNC_INTERVAL"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.Runtime.ResyncInterval = n
+		}
+	}
+	if v := os.Getenv("REGISTRATOR_RUNTIME_MANAGER_API_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Runtime.ManagerAPIPort = n
 		}
 	}
 }

@@ -170,6 +170,7 @@ Supported environment variables:
 | `REGISTRATOR_RUNTIME_RETRY_ATTEMPTS` | `10` | Retry attempts for register/deregister (`-1` means infinite). |
 | `REGISTRATOR_RUNTIME_RETRY_INTERVAL_MS` | `2000` | Delay between retries in milliseconds. |
 | `REGISTRATOR_RUNTIME_RESYNC_INTERVAL` | `30` | Periodic resync interval in seconds. |
+| `REGISTRATOR_RUNTIME_MANAGER_API_PORT` | `2375` | Docker API port that workers use to query manager nodes for Swarm service port metadata. |
 | `CONSUL_HTTP_TOKEN` | _(empty)_ | Consul ACL token (consumed by Consul client from env). |
 | `CONSUL_CACERT` | _(empty)_ | CA certificate file path used in `consul-tls` mode. |
 | `CONSUL_CLIENT_CERT` | _(empty)_ | Client certificate file path used in `consul-tls` mode. |
@@ -261,6 +262,7 @@ In `Discovery.Mode=local`, Registrator resolves the local Consul agent via Docke
 
 For Swarm service containers, Registrator resolves service ports from Swarm service endpoint metadata.  
 On worker nodes, it can query manager nodes in sorted order (with backoff retries) for authoritative service `EndpointSpec.Ports`, reducing dependence on local worker-only container networking details.
+This communication path is worker -> Docker manager API (`runtime.managerAPIPort`), not registrator-to-registrator peer RPC.
 
 ## Failure handling model
 

@@ -306,8 +306,8 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 
 	// not sure about this logic. kind of want to remove it.
 	hostname := Hostname
-	if b.config.LocalNodeID != "" {
-		hostname = b.config.LocalNodeID
+	if container.Node != nil && container.Node.Name != "" {
+		hostname = container.Node.Name
 	}
 	if hostname == "" {
 		hostname = port.HostIP

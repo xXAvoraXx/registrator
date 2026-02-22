@@ -819,6 +819,8 @@ func (b *Bridge) ownsContainer(container *dockerapi.Container) bool {
 		nodeID = container.Config.Labels["com.docker.swarm.node.id"]
 	}
 	if nodeID == "" {
+		// Some engines omit swarm node metadata for local task containers.
+		// In that case, do not drop registration; swarm port resolution still uses manager data.
 		return true
 	}
 	return nodeID == b.config.LocalNodeID

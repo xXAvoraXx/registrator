@@ -1,11 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"sync/atomic"
+	"time"
 
 	dockerapi "github.com/fsouza/go-dockerclient"
 	"github.com/gliderlabs/registrator/bridge"
@@ -18,6 +21,10 @@ type swarmRuntime struct {
 	NodeAddr         string
 	RunningAsService bool
 	SwarmServiceID   string
+	SwarmServiceName string
+	SwarmTaskID      string
+	Hostname         string
+	OverlayIP        string
 }
 
 func detectSwarmRuntime(docker *dockerapi.Client) swarmRuntime {
@@ -39,18 +46,54 @@ func detectSwarmRuntime(docker *dockerapi.Client) swarmRuntime {
 		log.Printf("unable to get hostname for swarm task detection: %v", err)
 		return sw
 	}
+	sw.Hostname = hostname
 	container, err := docker.InspectContainer(hostname)
 	if err == nil && container != nil && container.Config != nil {
 		labels := container.Config.Labels
 		if labels["com.docker.swarm.service.id"] != "" {
 			sw.RunningAsService = true
 			sw.SwarmServiceID = labels["com.docker.swarm.service.id"]
+			sw.SwarmServiceName = labels["com.docker.swarm.service.name"]
+			sw.SwarmTaskID = labels["com.docker.swarm.task.id"]
+			if sw.NodeID == "" {
+				sw.NodeID = labels["com.docker.swarm.node.id"]
+			}
+		}
+		if container.NetworkSettings != nil {
+			for _, network := range container.NetworkSettings.Networks {
+				if network.IPAddress != "" {
+					sw.OverlayIP = network.IPAddress
+					break
+				}
+			}
 		}
 	}
 	return sw
 }
 
-func serveStatus(addr string, b *bridge.Bridge, eventsProcessed *uint64, reconcileRuns *uint64) {
+type peerInfo struct {
+	ServiceID   string `json:"serviceId"`
+	ServiceName string `json:"serviceName"`
+	TaskID      string `json:"taskId"`
+	NodeID      string `json:"nodeId"`
+	Hostname    string `json:"hostname"`
+	OverlayIP   string `json:"overlayIP"`
+	Role        string `json:"role"`
+}
+
+func (s swarmRuntime) peerInfo() peerInfo {
+	return peerInfo{
+		ServiceID:   s.SwarmServiceID,
+		ServiceName: s.SwarmServiceName,
+		TaskID:      s.SwarmTaskID,
+		NodeID:      s.NodeID,
+		Hostname:    s.Hostname,
+		OverlayIP:   s.OverlayIP,
+		Role:        s.Role,
+	}
+}
+
+func serveStatus(addr string, b *bridge.Bridge, runtime swarmRuntime, eventsProcessed *uint64, reconcileRuns *uint64) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -68,8 +111,74 @@ func serveStatus(addr string, b *bridge.Bridge, eventsProcessed *uint64, reconci
 		_, _ = fmt.Fprintf(w, "registrator_events_processed_total %d\n", atomic.LoadUint64(eventsProcessed))
 		_, _ = fmt.Fprintf(w, "registrator_reconcile_runs_total %d\n", atomic.LoadUint64(reconcileRuns))
 	})
+	mux.HandleFunc("/peerinfo", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(runtime.peerInfo())
+	})
 	log.Printf("Serving status endpoints on %s", addr)
+	startPeerDiscovery(runtime, addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Printf("status server stopped: %v", err)
 	}
+}
+
+func startPeerDiscovery(runtime swarmRuntime, addr string) {
+	if !runtime.RunningAsService || runtime.SwarmServiceName == "" {
+		return
+	}
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return
+	}
+	peerHost := "tasks." + runtime.SwarmServiceName
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			discoverPeers(peerHost, port, runtime.OverlayIP)
+			<-ticker.C
+		}
+	}()
+}
+
+func discoverPeers(peerHost, port, selfOverlayIP string) {
+	ips, err := net.LookupIP(peerHost)
+	if err != nil {
+		return
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	for _, ip := range ips {
+		peerIP := ip.String()
+		if peerIP == selfOverlayIP {
+			continue
+		}
+		url := "http://" + net.JoinHostPort(peerIP, port) + "/peerinfo"
+		info, err := fetchPeerInfo(client, url)
+		if err != nil {
+			continue
+		}
+		log.Printf("discovered peer service=%s task=%s node=%s ip=%s role=%s", info.ServiceName, info.TaskID, info.NodeID, info.OverlayIP, info.Role)
+	}
+}
+
+func fetchPeerInfo(client *http.Client, url string) (peerInfo, error) {
+	resp, err := client.Get(url)
+	if err != nil {
+		return peerInfo{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return peerInfo{}, fmt.Errorf("peerinfo status %d", resp.StatusCode)
+	}
+	var info peerInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return peerInfo{}, err
+	}
+	if info.OverlayIP == "" {
+		host, _, err := net.SplitHostPort(resp.Request.URL.Host)
+		if err == nil {
+			info.OverlayIP = host
+		}
+	}
+	return info, nil
 }

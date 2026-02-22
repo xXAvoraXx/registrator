@@ -178,9 +178,37 @@ func (b *Bridge) Sync(quiet bool) {
 			log.Println("cleanup failed:", err)
 			return
 		}
+		preferredIDs := make(map[string]struct{})
+		for _, listing := range b.services {
+			for _, service := range listing {
+				preferredIDs[service.ID] = struct{}{}
+			}
+		}
+		duplicateIDs := duplicateServiceIDs(extServices, preferredIDs)
+		duplicateSet := make(map[string]struct{}, len(duplicateIDs))
+		if len(duplicateIDs) > 0 {
+			for _, duplicateID := range duplicateIDs {
+				duplicateSet[duplicateID] = struct{}{}
+			}
+			for _, extService := range extServices {
+				if _, ok := duplicateSet[extService.ID]; !ok {
+					continue
+				}
+				err := b.registry.Deregister(extService)
+				if err != nil {
+					log.Println("duplicate cleanup deregister failed:", extService.ID, err)
+					continue
+				}
+				delete(b.serviceHashes, extService.ID)
+				log.Println("duplicate removed:", extService.ID)
+			}
+		}
 
 	Outer:
 		for _, extService := range extServices {
+			if _, duplicate := duplicateSet[extService.ID]; duplicate {
+				continue
+			}
 			matches := serviceIDPattern.FindStringSubmatch(extService.ID)
 			if len(matches) != 3 {
 				// There's no way this was registered by us, so leave it

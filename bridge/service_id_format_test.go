@@ -58,3 +58,34 @@ func TestResolvedSwarmPortKeepsServiceIDFormat(t *testing.T) {
 	assert.NotNil(t, service)
 	assert.Equal(t, "vps-74f5f77e:persistence-keygen-db-pj46xk.1.m69empeguslu19zx9fbmaqnz0:5432", service.ID)
 }
+
+func TestSwarmUsesStableNodeIDInServiceID(t *testing.T) {
+	previousHostname := Hostname
+	Hostname = "ephemeral-container-id"
+	defer func() { Hostname = previousHostname }()
+
+	container := &dockerapi.Container{
+		ID:   "abc123",
+		Name: "/svc.1.taskid",
+		Config: &dockerapi.Config{
+			Image: "postgres:16",
+		},
+		HostConfig:      &dockerapi.HostConfig{},
+		NetworkSettings: &dockerapi.NetworkSettings{IPAddress: "10.0.0.20"},
+	}
+
+	b := &Bridge{config: Config{LocalNodeID: "swarm-node-id"}}
+	service := b.newService(ServicePort{
+		HostIP:       "10.0.0.10",
+		HostPort:     "5432",
+		ExposedIP:    "10.0.0.20",
+		ExposedPort:  "5432",
+		PortType:     "tcp",
+		NetworkNames: []string{"app-net"},
+		container:    container,
+	}, false)
+
+	assert.NotNil(t, service)
+	assert.Equal(t, "swarm-node-id:svc.1.taskid:5432", service.ID)
+	assert.Contains(t, service.Tags, "app-net")
+}

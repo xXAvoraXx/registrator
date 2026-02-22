@@ -306,6 +306,9 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 
 	// not sure about this logic. kind of want to remove it.
 	hostname := Hostname
+	if b.config.LocalNodeID != "" {
+		hostname = b.config.LocalNodeID
+	}
 	if hostname == "" {
 		hostname = port.HostIP
 	}
@@ -725,6 +728,9 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 	} else {
 		service.Tags = combineTags(
 			mapDefault(metadata, "tags", ""), ForceTags)
+	}
+	if len(port.NetworkNames) > 0 {
+		service.Tags = append(service.Tags, port.NetworkNames...)
 	}
 
 	id := mapDefault(metadata, "id", "")

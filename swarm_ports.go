@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 	"time"
@@ -55,11 +56,12 @@ func (r *swarmPortResolver) ResolveSwarmPorts(container *dockerapi.Container) ([
 		ports = service.Endpoint.Ports
 	}
 	out := make([]bridge.ServicePort, 0, len(ports))
+	networkIP, networkNames := serviceNetworkInfo(container, service)
 	for _, p := range ports {
 		if p.PublishedPort == 0 && p.TargetPort == 0 {
 			continue
 		}
-		hostIP := r.advertisedIP(service)
+		hostIP := r.advertisedIP(service, networkIP)
 		if hostIP == "" {
 			hostIP = r.runtime.NodeAddr
 		}
@@ -67,13 +69,15 @@ func (r *swarmPortResolver) ResolveSwarmPorts(container *dockerapi.Container) ([
 		if string(p.Protocol) != "" {
 			portType = string(p.Protocol)
 		}
-		out = append(out, bridge.NewResolvedServicePort(
+		resolved := bridge.NewResolvedServicePort(
 			container,
 			hostIP,
 			fmt.Sprintf("%d", p.PublishedPort),
 			fmt.Sprintf("%d", p.TargetPort),
 			portType,
-		))
+		)
+		resolved.NetworkNames = networkNames
+		out = append(out, resolved)
 	}
 	return out, nil
 }
@@ -111,17 +115,69 @@ func (r *swarmPortResolver) managerNodeAddrs() []string {
 	if err != nil {
 		return nil
 	}
-	addrs := make([]string, 0)
+	addrSet := make(map[string]struct{})
 	for _, node := range nodes {
-		if node.ManagerStatus != nil && node.Status.Addr != "" {
-			addrs = append(addrs, node.Status.Addr)
+		if node.ManagerStatus == nil {
+			continue
 		}
+		if node.Status.Addr != "" {
+			addrSet[node.Status.Addr] = struct{}{}
+		}
+		if mgrAddr := managerStatusAddr(node.ManagerStatus.Addr); mgrAddr != "" {
+			addrSet[mgrAddr] = struct{}{}
+		}
+	}
+	addrs := make([]string, 0, len(addrSet))
+	for addr := range addrSet {
+		addrs = append(addrs, addr)
 	}
 	sort.Strings(addrs)
 	return addrs
 }
 
-func (r *swarmPortResolver) advertisedIP(service *swarmapi.Service) string {
+func managerStatusAddr(addr string) string {
+	if addr == "" {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err == nil {
+		return host
+	}
+	return addr
+}
+
+func serviceNetworkInfo(container *dockerapi.Container, service *swarmapi.Service) (string, []string) {
+	if container == nil || container.NetworkSettings == nil || len(container.NetworkSettings.Networks) == 0 {
+		return "", nil
+	}
+	wantedIDs := make(map[string]struct{})
+	if service != nil {
+		for _, vip := range service.Endpoint.VirtualIPs {
+			if vip.NetworkID != "" {
+				wantedIDs[vip.NetworkID] = struct{}{}
+			}
+		}
+	}
+	names := make([]string, 0, len(container.NetworkSettings.Networks))
+	for name, network := range container.NetworkSettings.Networks {
+		if network.IPAddress == "" {
+			continue
+		}
+		if len(wantedIDs) > 0 {
+			if _, ok := wantedIDs[network.NetworkID]; !ok {
+				continue
+			}
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return "", nil
+	}
+	return container.NetworkSettings.Networks[names[0]].IPAddress, names
+}
+
+func (r *swarmPortResolver) advertisedIP(service *swarmapi.Service, preferredIP string) string {
 	switch r.advertiseMode {
 	case "custom":
 		return r.advertiseOverride
@@ -137,6 +193,9 @@ func (r *swarmPortResolver) advertisedIP(service *swarmapi.Service) string {
 	default:
 		if r.advertiseOverride != "" {
 			return r.advertiseOverride
+		}
+		if preferredIP != "" {
+			return preferredIP
 		}
 		return r.runtime.NodeAddr
 	}

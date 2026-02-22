@@ -59,7 +59,9 @@ func TestResolveAddressFallsBackWhenDockerResolveFails(t *testing.T) {
 	}()
 
 	docker, err := dockerapi.NewClient("unix:///tmp/registrator-missing-docker.sock")
-	assert.NoError(t, err)
+	if err != nil {
+		t.Fatalf("failed to create docker client: %v", err)
+	}
 
 	runtimeConfig = RuntimeConfig{
 		Mode:             "local",

@@ -62,8 +62,8 @@ func TestEnsureTag(t *testing.T) {
 	tags := ensureTag([]string{"keygen", "db"}, registratorManagedTag)
 	assert.EqualValues(t, []string{"keygen", "db", "registrator"}, tags)
 
-	existing := ensureTag([]string{"production", "Registrator"}, registratorManagedTag)
-	assert.EqualValues(t, []string{"production", "Registrator"}, existing)
+	alreadyTagged := ensureTag([]string{"production", "Registrator"}, registratorManagedTag)
+	assert.EqualValues(t, []string{"production", "Registrator"}, alreadyTagged)
 }
 
 func TestIsRegistratorManagedService(t *testing.T) {

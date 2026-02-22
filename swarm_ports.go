@@ -159,6 +159,7 @@ func serviceNetworkInfo(container *dockerapi.Container, service *swarmapi.Servic
 		}
 	}
 	names := make([]string, 0, len(container.NetworkSettings.Networks))
+	ips := make(map[string]string, len(container.NetworkSettings.Networks))
 	for name, network := range container.NetworkSettings.Networks {
 		if network.IPAddress == "" {
 			continue
@@ -169,12 +170,13 @@ func serviceNetworkInfo(container *dockerapi.Container, service *swarmapi.Servic
 			}
 		}
 		names = append(names, name)
+		ips[name] = network.IPAddress
 	}
 	sort.Strings(names)
 	if len(names) == 0 {
 		return "", nil
 	}
-	return container.NetworkSettings.Networks[names[0]].IPAddress, names
+	return ips[names[0]], names
 }
 
 func (r *swarmPortResolver) advertisedIP(service *swarmapi.Service, preferredIP string) string {

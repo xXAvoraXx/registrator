@@ -81,11 +81,11 @@ func TestSwarmUsesStableNodeIDInServiceID(t *testing.T) {
 		ExposedIP:    "10.0.0.20",
 		ExposedPort:  "5432",
 		PortType:     "tcp",
-		NetworkNames: []string{"app-net"},
+		NetworkNames: []string{"app-net", "ingress"},
 		container:    container,
 	}, false)
 
 	assert.NotNil(t, service)
 	assert.Equal(t, "swarm-node-id:svc.1.taskid:5432", service.ID)
-	assert.Contains(t, service.Tags, "app-net")
+	assert.ElementsMatch(t, []string{"app-net", "ingress"}, service.Tags)
 }

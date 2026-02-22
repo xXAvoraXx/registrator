@@ -6,6 +6,7 @@ require (
 	github.com/buger/jsonparser v1.1.1
 	github.com/cenkalti/backoff v2.0.0+incompatible
 	github.com/coreos/go-etcd v2.0.0+incompatible
+	github.com/docker/docker v17.12.0-ce-rc1.0.20180412203414-a422774e593b+incompatible
 	github.com/fsouza/go-dockerclient v1.2.0
 	github.com/gliderlabs/pkg v0.0.0-20161206023812-36f28d47ec7a
 	github.com/hashicorp/consul v1.0.7
@@ -23,7 +24,6 @@ require (
 	github.com/armon/go-metrics v0.3.9 // indirect
 	github.com/containerd/continuity v0.0.0-20180416230128-c6cef3483023 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/docker/docker v17.12.0-ce-rc1.0.20180412203414-a422774e593b+incompatible // indirect
 	github.com/docker/go-connections v0.3.0 // indirect
 	github.com/docker/go-units v0.3.3 // indirect
 	github.com/gogo/protobuf v1.1.1 // indirect

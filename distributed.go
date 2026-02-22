@@ -18,6 +18,15 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const (
+	clusterIDPrefixLen     = 8
+	lockRetryMaxElapsed    = 5 * time.Second
+	managerRetryMaxElapsed = 5 * time.Second
+	defaultDockerAPIVer    = "1.41"
+	redisDialTimeout       = 2 * time.Second
+	redisOpTimeout         = 3 * time.Second
+)
+
 type lockStore interface {
 	TryLock(ctx context.Context, key, value string, ttl time.Duration) (bool, error)
 	Unlock(ctx context.Context, key, value string) error
@@ -132,13 +141,13 @@ func (r *redisLockStore) Delete(ctx context.Context, key string) error {
 }
 
 func (r *redisLockStore) cmd(ctx context.Context, args ...string) (string, error) {
-	dialer := net.Dialer{Timeout: 2 * time.Second}
+	dialer := net.Dialer{Timeout: redisDialTimeout}
 	conn, err := dialer.DialContext(ctx, "tcp", r.addr)
 	if err != nil {
 		return "", err
 	}
 	defer conn.Close()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(redisOpTimeout)
 	_ = conn.SetDeadline(deadline)
 
 	var b strings.Builder
@@ -269,7 +278,7 @@ func newDistributedCoordinator(docker *dockerapi.Client, runtime swarmRuntime, m
 
 func clusterIDFrom(runtime swarmRuntime) string {
 	if runtime.NodeID != "" {
-		return runtime.NodeID[:min(8, len(runtime.NodeID))]
+		return runtime.NodeID[:min(clusterIDPrefixLen, len(runtime.NodeID))]
 	}
 	return "default"
 }
@@ -452,7 +461,7 @@ func (d *distributedCoordinator) withBackoffLock(ctx context.Context, key, value
 		return nil
 	}
 	exp := backoff.NewExponentialBackOff()
-	exp.MaxElapsedTime = 5 * time.Second
+	exp.MaxElapsedTime = lockRetryMaxElapsed
 	if err := backoff.Retry(op, exp); err != nil {
 		return false, err
 	}
@@ -496,15 +505,13 @@ func (d *distributedCoordinator) ResolveSwarmPorts(container *dockerapi.Containe
 		if string(p.Protocol) != "" {
 			portType = string(p.Protocol)
 		}
-		out = append(out, bridge.ServicePort{
-			HostPort:          fmt.Sprintf("%d", p.PublishedPort),
-			HostIP:            hostIP,
-			ExposedPort:       fmt.Sprintf("%d", p.TargetPort),
-			ExposedIP:         container.NetworkSettings.IPAddress,
-			PortType:          portType,
-			ContainerID:       container.ID,
-			ContainerHostname: container.Config.Hostname,
-		})
+		out = append(out, bridge.NewResolvedServicePort(
+			container,
+			hostIP,
+			fmt.Sprintf("%d", p.PublishedPort),
+			fmt.Sprintf("%d", p.TargetPort),
+			portType,
+		))
 	}
 	return out, nil
 }
@@ -513,11 +520,13 @@ func (d *distributedCoordinator) inspectService(serviceID string) (*swarmapi.Ser
 	if d.runtime.Role == "manager" {
 		return d.docker.InspectService(serviceID)
 	}
+	// Worker-to-manager metadata lookups currently use a direct Docker API TCP endpoint.
+	// Deployments should secure this path (private network, firewall policy, or TLS-terminating proxy).
 	managers := d.managerNodeAddrs()
 	var service *swarmapi.Service
 	op := func() error {
 		for _, addr := range managers {
-			client, err := dockerapi.NewVersionedClient(fmt.Sprintf("tcp://%s:%d", addr, d.managerAPIPort), "1.41")
+			client, err := dockerapi.NewVersionedClient(fmt.Sprintf("tcp://%s:%d", addr, d.managerAPIPort), defaultDockerAPIVer)
 			if err != nil {
 				continue
 			}
@@ -529,7 +538,7 @@ func (d *distributedCoordinator) inspectService(serviceID string) (*swarmapi.Ser
 		return fmt.Errorf("unable to inspect service %s from manager list", serviceID)
 	}
 	exp := backoff.NewExponentialBackOff()
-	exp.MaxElapsedTime = 5 * time.Second
+	exp.MaxElapsedTime = managerRetryMaxElapsed
 	err := backoff.Retry(op, exp)
 	return service, err
 }
@@ -558,7 +567,7 @@ func (d *distributedCoordinator) advertisedIP(service *swarmapi.Service) string 
 			return ""
 		}
 		addr := service.Endpoint.VirtualIPs[0].Addr
-		if idx := strings.Index(addr, "/"); idx > 0 {
+		if idx := strings.Index(addr, "/"); idx >= 0 {
 			return addr[:idx]
 		}
 		return addr

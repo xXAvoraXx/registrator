@@ -23,6 +23,7 @@ import (
 )
 
 var serviceIDPattern = regexp.MustCompile(`^(.+?):([a-zA-Z0-9][a-zA-Z0-9_.-]+):[0-9]+(?::udp)?$`)
+const aggregateServiceIDSuffix = ".all"
 
 type Bridge struct {
 	sync.Mutex
@@ -290,7 +291,7 @@ func (b *Bridge) add(containerId string, quiet bool) {
 			for _, resolved := range swarmPorts {
 				key := fmt.Sprintf("%s/%s", resolved.ExposedPort, resolved.PortType)
 				if len(resolved.NetworkNames) > 0 {
-					key += "/" + strings.Join(resolved.NetworkNames, ",")
+					key += "/" + resolved.NetworkNames[0]
 				}
 				ports[key] = resolved
 			}
@@ -332,11 +333,14 @@ func (b *Bridge) add(containerId string, quiet bool) {
 		if len(port.NetworkNames) == 1 {
 			networkName := port.NetworkNames[0]
 			networkSuffix := "." + networkName + "." + port.ExposedPort
-			baseName := strings.TrimSuffix(service.Name, networkSuffix)
-			if baseName != service.Name {
+			if strings.HasSuffix(service.Name, networkSuffix) {
+				baseName := strings.TrimSuffix(service.Name, networkSuffix)
 				aggregate := *service
 				aggregate.Name = baseName
-				aggregate.ID = appendServiceIDNameSuffix(service.ID, ".all")
+				aggregate.ID = appendServiceIDNameSuffix(service.ID, aggregateServiceIDSuffix)
+				if aggregate.ID == service.ID {
+					continue
+				}
 				err := b.registerService(&aggregate)
 				if err != nil {
 					log.Println("register failed:", &aggregate, err)
@@ -417,12 +421,13 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 	service := new(Service)
 	service.Origin = port
 	idName := container.Name[1:]
-	if len(port.NetworkNames) == 1 {
+	hasNetworkQualifier := len(port.NetworkNames) == 1
+	if hasNetworkQualifier {
 		idName = idName + "." + port.NetworkNames[0]
 	}
 	service.ID = b.resolveServiceID(hostname, idName, port.ExposedPort)
 	service.Name = serviceName
-	if len(port.NetworkNames) == 1 && !metadataFromPort["name"] {
+	if hasNetworkQualifier && !metadataFromPort["name"] {
 		service.Name = fmt.Sprintf("%s.%s.%s", serviceName, port.NetworkNames[0], port.ExposedPort)
 	} else if isgroup && !metadataFromPort["name"] {
 		service.Name += "-" + port.ExposedPort

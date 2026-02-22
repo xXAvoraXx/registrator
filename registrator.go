@@ -93,12 +93,14 @@ func main() {
 	retryAttempts := cfg.Runtime.RetryAttempts
 	retryInterval := cfg.Runtime.RetryIntervalMs
 	for retryAttempts == -1 || attempt <= retryAttempts {
-		log.Printf("Connecting to backend (%v/%v)", attempt, retryAttempts)
+		log.Printf("Connecting to backend (%v/%v)", attempt+1, retryAttempts+1)
 
 		err = b.Ping()
 		if err == nil {
+			log.Printf("Connected to backend (%v/%v)", attempt+1, retryAttempts+1)
 			break
 		}
+		log.Printf("Backend ping failed (%v/%v): %v", attempt+1, retryAttempts+1, err)
 
 		if err != nil && attempt == retryAttempts {
 			assert(err)

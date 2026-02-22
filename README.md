@@ -78,34 +78,36 @@ Configuration priority:
 
 Supported environment variables:
 
-```
-REGISTRATOR_DISCOVERY_PROVIDER=consul
-REGISTRATOR_DISCOVERY_MODE=local
-REGISTRATOR_DISCOVERY_ADDRESS=
-REGISTRATOR_DISCOVERY_PORT=8500
-REGISTRATOR_DISCOVERY_SERVICE_NAME=consul
-REGISTRATOR_DISCOVERY_USE_DOCKER_RESOLVE=true
-
-REGISTRATOR_SERVICE_NAME_SOURCE=service.name
-REGISTRATOR_SERVICE_LABEL_KEY=service.name
-REGISTRATOR_SERVICE_ID_FORMAT={hostname}:{name}:{port}
-
-REGISTRATOR_DOCKER_ENDPOINT=unix:///tmp/docker.sock
-REGISTRATOR_DOCKER_SWARM_MODE=true
-REGISTRATOR_STATUS_ADDR=:8080
-
-REGISTRATOR_RUNTIME_HOST_IP=
-REGISTRATOR_RUNTIME_INTERNAL=false
-REGISTRATOR_RUNTIME_EXPLICIT=false
-REGISTRATOR_RUNTIME_FORCE_TAGS=
-REGISTRATOR_RUNTIME_REFRESH_TTL=0
-REGISTRATOR_RUNTIME_REFRESH_INTERVAL=0
-REGISTRATOR_RUNTIME_DEREGISTER_CHECK=always
-REGISTRATOR_RUNTIME_CLEANUP=true
-REGISTRATOR_RUNTIME_RETRY_ATTEMPTS=10
-REGISTRATOR_RUNTIME_RETRY_INTERVAL_MS=2000
-REGISTRATOR_RUNTIME_RESYNC_INTERVAL=30
-```
+| Environment Variable | Default | Description |
+|---|---|---|
+| `REGISTRATOR_CONFIG` | `/etc/registrator/config.yaml` | Path to configuration file. If the file exists, env values override file values. |
+| `REGISTRATOR_DISCOVERY_PROVIDER` | `consul` | Discovery backend provider (for example, `consul`). |
+| `REGISTRATOR_DISCOVERY_MODE` | `local` | Discovery address resolution mode (`local`, `service`, etc.). |
+| `REGISTRATOR_DISCOVERY_ADDRESS` | _(empty)_ | Direct address override for discovery backend. |
+| `REGISTRATOR_DISCOVERY_PORT` | `8500` | Discovery backend port. |
+| `REGISTRATOR_DISCOVERY_SERVICE_NAME` | `consul` | Discovery service name used in `service` mode. |
+| `REGISTRATOR_DISCOVERY_USE_DOCKER_RESOLVE` | `true` | Enables/disables Docker-based address resolution in `local` mode. |
+| `REGISTRATOR_SERVICE_NAME_SOURCE` | `service.name` | Service name source (label/metadata key). |
+| `REGISTRATOR_SERVICE_LABEL_KEY` | `service.name` | Default label key used to read service name. |
+| `REGISTRATOR_SERVICE_ID_FORMAT` | `{hostname}:{name}:{port}` | Format string for generated service IDs. |
+| `REGISTRATOR_DOCKER_ENDPOINT` | `unix:///tmp/docker.sock` | Docker API endpoint. |
+| `REGISTRATOR_DOCKER_SWARM_MODE` | `true` | Enables/disables Swarm-aware behavior. |
+| `REGISTRATOR_STATUS_ADDR` | `:8080` | Listen address for health/readiness/metrics endpoints. |
+| `REGISTRATOR_RUNTIME_HOST_IP` | _(empty)_ | Runtime host IP override. |
+| `REGISTRATOR_RUNTIME_INTERNAL` | `false` | Controls whether internal ports are processed. |
+| `REGISTRATOR_RUNTIME_EXPLICIT` | `false` | Controls processing of only explicitly declared services. |
+| `REGISTRATOR_RUNTIME_FORCE_TAGS` | _(empty)_ | Comma-separated tags appended to all service registrations. |
+| `REGISTRATOR_RUNTIME_REFRESH_TTL` | `0` | TTL refresh period in seconds (`0` disables). |
+| `REGISTRATOR_RUNTIME_REFRESH_INTERVAL` | `0` | Refresh loop interval in seconds (`0` disables). |
+| `REGISTRATOR_RUNTIME_DEREGISTER_CHECK` | `always` | Policy for deregister/check handling. |
+| `REGISTRATOR_RUNTIME_CLEANUP` | `true` | Enables/disables cleanup behavior during runtime flows. |
+| `REGISTRATOR_RUNTIME_RETRY_ATTEMPTS` | `10` | Retry attempts for register/deregister (`-1` means infinite). |
+| `REGISTRATOR_RUNTIME_RETRY_INTERVAL_MS` | `2000` | Delay between retries in milliseconds. |
+| `REGISTRATOR_RUNTIME_RESYNC_INTERVAL` | `30` | Periodic resync interval in seconds. |
+| `CONSUL_HTTP_TOKEN` | _(empty)_ | Consul ACL token (consumed by Consul client from env). |
+| `CONSUL_CACERT` | _(empty)_ | CA certificate file path used in `consul-tls` mode. |
+| `CONSUL_CLIENT_CERT` | _(empty)_ | Client certificate file path used in `consul-tls` mode. |
+| `CONSUL_CLIENT_KEY` | _(empty)_ | Client private key file path used in `consul-tls` mode. |
 
 ## Installation / Kurulum
 

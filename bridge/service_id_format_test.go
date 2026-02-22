@@ -90,3 +90,35 @@ func TestSwarmUsesMachineHostnameInServiceID(t *testing.T) {
 	assert.Equal(t, "worker-hostname:svc.1.taskid:5432", service.ID)
 	assert.ElementsMatch(t, []string{"app-net", "ingress"}, service.Tags)
 }
+
+func TestSwarmUsesLocalEngineHostnameWhenContainerNodeNameMissing(t *testing.T) {
+	previousHostname := Hostname
+	Hostname = "ephemeral-container-id"
+	defer func() { Hostname = previousHostname }()
+
+	container := &dockerapi.Container{
+		ID:   "abc123",
+		Name: "/svc.1.taskid",
+		Config: &dockerapi.Config{
+			Image: "postgres:16",
+		},
+		HostConfig:      &dockerapi.HostConfig{},
+		NetworkSettings: &dockerapi.NetworkSettings{IPAddress: "10.0.0.20"},
+	}
+
+	b := &Bridge{
+		config:        Config{},
+		localHostname: "worker-hostname",
+	}
+	service := b.newService(ServicePort{
+		HostIP:      "10.0.0.10",
+		HostPort:    "5432",
+		ExposedIP:   "10.0.0.20",
+		ExposedPort: "5432",
+		PortType:    "tcp",
+		container:   container,
+	}, false)
+
+	assert.NotNil(t, service)
+	assert.Equal(t, "worker-hostname:svc.1.taskid:5432", service.ID)
+}

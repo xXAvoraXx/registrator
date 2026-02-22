@@ -28,6 +28,7 @@ type Bridge struct {
 	sync.Mutex
 	registry       RegistryAdapter
 	docker         *dockerapi.Client
+	localHostname  string
 	services       map[string][]*Service
 	serviceHashes  map[string]string
 	deadContainers map[string]*DeadContainer
@@ -44,9 +45,17 @@ func New(docker *dockerapi.Client, adapterUri string, config Config) (*Bridge, e
 		return nil, errors.New("unrecognized adapter: " + adapterUri)
 	}
 
+	localHostname := ""
+	if docker != nil {
+		if info, err := docker.Info(); err == nil {
+			localHostname = info.Name
+		}
+	}
+
 	log.Println("Using", uri.Scheme, "adapter:", uri)
 	return &Bridge{
 		docker:         docker,
+		localHostname:  localHostname,
 		config:         config,
 		registry:       factory.New(uri),
 		services:       make(map[string][]*Service),
@@ -336,6 +345,8 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 	hostname := Hostname
 	if container.Node != nil && container.Node.Name != "" {
 		hostname = container.Node.Name
+	} else if b.localHostname != "" {
+		hostname = b.localHostname
 	}
 	if hostname == "" {
 		hostname = port.HostIP

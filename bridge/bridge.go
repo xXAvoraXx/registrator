@@ -815,6 +815,12 @@ func (b *Bridge) ownsContainer(container *dockerapi.Container) bool {
 	if container.Node != nil {
 		nodeID = container.Node.ID
 	}
+	if nodeID == "" && container.Config != nil && container.Config.Labels != nil {
+		nodeID = container.Config.Labels["com.docker.swarm.node.id"]
+	}
+	if nodeID == "" {
+		return true
+	}
 	return nodeID == b.config.LocalNodeID
 }
 

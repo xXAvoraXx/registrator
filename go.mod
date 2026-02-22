@@ -1,6 +1,6 @@
 module github.com/gliderlabs/registrator
 
-go 1.17
+go 1.22
 
 require (
 	github.com/buger/jsonparser v1.1.1

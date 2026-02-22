@@ -28,6 +28,7 @@ type Bridge struct {
 	registry       RegistryAdapter
 	docker         *dockerapi.Client
 	services       map[string][]*Service
+	serviceHashes  map[string]string
 	deadContainers map[string]*DeadContainer
 	config         Config
 }
@@ -48,6 +49,7 @@ func New(docker *dockerapi.Client, adapterUri string, config Config) (*Bridge, e
 		config:         config,
 		registry:       factory.New(uri),
 		services:       make(map[string][]*Service),
+		serviceHashes:  make(map[string]string),
 		deadContainers: make(map[string]*DeadContainer),
 	}, nil
 }
@@ -107,6 +109,13 @@ func (b *Bridge) Sync(quiet bool) {
 
 	log.Printf("Syncing services on %d containers", len(containers))
 
+	extServices, err := b.registry.Services()
+	if err == nil {
+		for _, extService := range extServices {
+			b.serviceHashes[extService.ID] = serviceHash(extService)
+		}
+	}
+
 	// NOTE: This assumes reregistering will do the right thing, i.e. nothing..
 	for _, listing := range containers {
 		services := b.services[listing.ID]
@@ -114,7 +123,7 @@ func (b *Bridge) Sync(quiet bool) {
 			b.add(listing.ID, quiet)
 		} else {
 			for _, service := range services {
-				err := b.registry.Register(service)
+				err := b.registerService(service)
 				if err != nil {
 					log.Println("sync register failed:", service, err)
 				}
@@ -242,7 +251,7 @@ func (b *Bridge) add(containerId string, quiet bool) {
 			}
 			continue
 		}
-		err := b.registry.Register(service)
+		err := b.registerService(service)
 		if err != nil {
 			log.Println("register failed:", service, err)
 			continue
@@ -683,7 +692,7 @@ func (b *Bridge) remove(containerId string, deregister bool) {
 	if deregister {
 		deregisterAll := func(services []*Service) {
 			for _, service := range services {
-				err := b.registry.Deregister(service)
+				err := b.deregisterService(service)
 				if err != nil {
 					log.Println("deregister failed:", service.ID, err)
 					continue
@@ -701,6 +710,36 @@ func (b *Bridge) remove(containerId string, deregister bool) {
 		b.deadContainers[containerId] = &DeadContainer{b.config.RefreshTtl, b.services[containerId]}
 	}
 	delete(b.services, containerId)
+}
+
+func (b *Bridge) registerService(service *Service) error {
+	hash := serviceHash(service)
+	if existingHash, found := b.serviceHashes[service.ID]; found && existingHash == hash {
+		return nil
+	}
+	if err := retry(func() error { return b.registry.Register(service) }); err != nil {
+		return err
+	}
+	b.serviceHashes[service.ID] = hash
+	return nil
+}
+
+func (b *Bridge) deregisterService(service *Service) error {
+	if err := retry(func() error { return b.registry.Deregister(service) }); err != nil {
+		return err
+	}
+	delete(b.serviceHashes, service.ID)
+	return nil
+}
+
+func (b *Bridge) ServiceCount() int {
+	b.Lock()
+	defer b.Unlock()
+	count := 0
+	for _, services := range b.services {
+		count += len(services)
+	}
+	return count
 }
 
 // bit set on ExitCode if it represents an exit via a signal

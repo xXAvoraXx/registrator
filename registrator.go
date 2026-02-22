@@ -8,11 +8,13 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	dockerapi "github.com/fsouza/go-dockerclient"
 	"github.com/gliderlabs/pkg/usage"
 	"github.com/gliderlabs/registrator/bridge"
+	"github.com/sirupsen/logrus"
 )
 
 var Version string
@@ -31,6 +33,12 @@ var deregister = flag.String("deregister", "always", "Deregister exited services
 var retryAttempts = flag.Int("retry-attempts", 0, "Max retry attempts to establish a connection with the backend. Use -1 for infinite retries")
 var retryInterval = flag.Int("retry-interval", 2000, "Interval (in millisecond) between retry-attempts.")
 var cleanup = flag.Bool("cleanup", false, "Remove dangling services")
+var statusAddr = flag.String("status-addr", "", "Address to bind health/readiness/metrics endpoints (disabled when empty)")
+var logLevel = flag.String("log-level", "info", "Log level (debug, info, warn, error)")
+var managerOnly = flag.Bool("swarm-manager-only", true, "When in Swarm mode, only managers perform registrations")
+
+var eventsProcessed uint64
+var reconcileRuns uint64
 
 func getopt(name, def string) string {
 	if env := os.Getenv(name); env != "" {
@@ -51,6 +59,10 @@ func main() {
 		os.Exit(0)
 	}
 	log.Printf("Starting registrator %s ...", Version)
+	level, err := logrus.ParseLevel(*logLevel)
+	if err == nil {
+		logrus.SetLevel(level)
+	}
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
@@ -59,6 +71,11 @@ func main() {
 	}
 
 	flag.Parse()
+	level, err = logrus.ParseLevel(*logLevel)
+	if err != nil {
+		assert(err)
+	}
+	logrus.SetLevel(level)
 
 	if flag.NArg() != 1 {
 		if flag.NArg() == 0 {
@@ -116,6 +133,24 @@ func main() {
 
 	assert(err)
 
+	swarmInfo := detectSwarmRuntime(docker)
+	logrus.WithFields(logrus.Fields{
+		"enabled":            swarmInfo.Enabled,
+		"node_id":            swarmInfo.NodeID,
+		"node_role":          swarmInfo.Role,
+		"node_address":       swarmInfo.NodeAddr,
+		"running_as_service": swarmInfo.RunningAsService,
+	}).Info("runtime swarm status")
+
+	passiveNode := swarmInfo.Enabled && swarmInfo.Role == "worker" && *managerOnly
+	if passiveNode {
+		logrus.Info("swarm-manager-only enabled: running in passive worker mode")
+	}
+
+	if *statusAddr != "" {
+		go serveStatus(*statusAddr, b, &eventsProcessed, &reconcileRuns)
+	}
+
 	attempt := 0
 	for *retryAttempts == -1 || attempt <= *retryAttempts {
 		log.Printf("Connecting to backend (%v/%v)", attempt, *retryAttempts)
@@ -138,7 +173,10 @@ func main() {
 	assert(docker.AddEventListener(events))
 	log.Println("Listening for Docker events ...")
 
-	b.Sync(false)
+	if !passiveNode {
+		b.Sync(false)
+		atomic.AddUint64(&reconcileRuns, 1)
+	}
 
 	quit := make(chan struct{})
 
@@ -165,7 +203,10 @@ func main() {
 			for {
 				select {
 				case <-resyncTicker.C:
-					b.Sync(true)
+					if !passiveNode {
+						b.Sync(true)
+						atomic.AddUint64(&reconcileRuns, 1)
+					}
 				case <-quit:
 					resyncTicker.Stop()
 					return
@@ -176,11 +217,28 @@ func main() {
 
 	// Process Docker events
 	for msg := range events {
+		atomic.AddUint64(&eventsProcessed, 1)
 		switch msg.Status {
 		case "start":
-			go b.Add(msg.ID)
+			if !passiveNode {
+				go b.Add(msg.ID)
+			}
 		case "die":
-			go b.RemoveOnExit(msg.ID)
+			if !passiveNode {
+				go b.RemoveOnExit(msg.ID)
+			}
+		case "stop", "pause", "destroy":
+			if !passiveNode {
+				go b.Remove(msg.ID)
+			}
+		case "unpause", "health_status: healthy":
+			if !passiveNode {
+				go b.Add(msg.ID)
+			}
+		case "health_status: unhealthy":
+			if !passiveNode {
+				go b.RemoveOnExit(msg.ID)
+			}
 		}
 	}
 

@@ -24,19 +24,11 @@ The original `gliderlabs/registrator` is stable but largely unmaintained for mod
   - hashes service metadata before writing
   - skips writes when backend state is already equivalent
   - retries register/deregister operations with exponential backoff
-- **Deterministic distributed ownership**:
-  - Swarm workers are passive when manager-only mode is enabled
-  - manager ownership is selected deterministically per service with `hash(serviceID) % managers`
-  - fallback ownership without Redis uses discovered registrator Swarm task nodes
-- **Optional Redis distributed coordination**:
-  - lock key: `registrator:{cluster_id}:lock:{service_id}`
-  - state key: `registrator:{cluster_id}:state:{service_id}`
-  - `SET NX EX` lock semantics with auto-expiry, plus fallback to in-memory coordination if Redis is unavailable
+- **Node-local ownership enforcement**:
+  - services are only processed for containers whose `container.Node.ID` matches the local Swarm node ID
 - **Expanded event coverage**:
   - `start`, `die`, `stop`, `pause`, `unpause`, `destroy`
   - health transitions (`health_status: healthy`, `health_status: unhealthy`)
-- **Optional manager-only mode in Swarm**:
-  - workers can run passive to avoid duplicate writes
 - **Operational endpoints**:
   - `/healthz`
   - `/readyz`
@@ -68,8 +60,7 @@ At startup, registrator logs:
 - node address
 - whether process is running as a Swarm service task
 
-When `-swarm-manager-only=true` (default), worker nodes stay passive in Swarm mode and do not mutate registry state.  
-If multiple managers are present, each Swarm service maps deterministically to exactly one manager, preventing multi-manager duplicate registration.
+Ownership is node-local: if an inspected container belongs to a different Swarm node, it is skipped and never registered by this instance.
 
 ## Deployment examples
 
@@ -94,7 +85,6 @@ docker service create \
   --mount type=bind,src=/var/run/docker.sock,dst=/tmp/docker.sock \
   --network host \
   ghcr.io/xxavoraxx/registrator:latest \
-  -swarm-manager-only=true \
   -resync=30 \
   -status-addr :8080 \
   consul://consul.service.consul:8500
@@ -109,22 +99,6 @@ registrator consul://consul.service.consul:8500
 ```
 
 All existing service metadata conventions (`SERVICE_*`) remain supported.
-
-## Redis coordination
-
-When `-redis-addr` is configured, Registrator enables distributed lock/state coordination:
-
-- Lock key: `registrator:{cluster_id}:lock:{service_id}`
-- State key: `registrator:{cluster_id}:state:{service_id}`
-- Lock acquisition uses Redis `SET key value NX EX ttl`
-- Locks auto-expire to avoid deadlocks after crashes
-- Service fingerprints are stored to avoid duplicate writes across process restarts
-
-If Redis is unavailable, Registrator gracefully falls back to local in-memory coordination and continues processing (with warning logs).
-
-## Inter-instance discovery (without Redis)
-
-When Redis is not configured, Registrator discovers peer instances by listing Swarm tasks for the current Registrator service (`com.docker.swarm.service.id`) and building a sorted active node list. That list is used as deterministic ownership input when manager discovery is not available.
 
 ## Swarm manager metadata resolution
 
@@ -142,8 +116,7 @@ On worker nodes, it can query manager nodes in sorted order (with backoff retrie
 ## Upgrade notes from original registrator
 
 - Keep existing backend URI argument model and adapter semantics
-- New flags were added (`-status-addr`, `-log-level`, `-swarm-manager-only`, `-redis-addr`, `-cluster-id`, `-advertise-mode`, `-advertise-ip-override`, `-manager-api-port`)
-- In Swarm, manager-only mode is now default for safer operation
+- New flags were added (`-status-addr`, `-log-level`, `-advertise-mode`, `-advertise-ip-override`, `-manager-api-port`)
 
 ## Configuration reference
 
@@ -169,11 +142,8 @@ On worker nodes, it can query manager nodes in sorted order (with backoff retrie
 
 ### Runtime/observability
 
-- `-swarm-manager-only` run workers in passive mode when Swarm is active
 - `-status-addr` bind address for `/healthz`, `/readyz`, `/metrics`
 - `-log-level` logging verbosity (`debug|info|warn|error`)
-- `-redis-addr` Redis endpoint (`host:port`) for distributed locking and state
-- `-cluster-id` namespace used in distributed coordination keys
 - `-manager-api-port` manager Docker API port for worker-side manager metadata resolution
 
 ### Environment variables
@@ -182,7 +152,7 @@ On worker nodes, it can query manager nodes in sorted order (with backoff retrie
 
 ## Production best practices
 
-1. Run in Swarm global mode with `-swarm-manager-only=true`.
+1. Run in Swarm global mode and mount `/var/run/docker.sock` to `/tmp/docker.sock`.
 2. Enable periodic reconciliation (`-resync`) to heal eventual drift.
 3. Scrape `/metrics` and alert on event/reconcile anomalies.
 4. Gate traffic rollouts on `/readyz`.

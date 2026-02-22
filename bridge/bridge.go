@@ -126,9 +126,9 @@ func (b *Bridge) Sync(quiet bool) {
 			}
 			continue
 		}
-		if b.config.Coordinator != nil && !b.config.Coordinator.OwnsContainer(container) {
+		if !b.ownsContainer(container) {
 			if existing := b.services[listing.ID]; len(existing) > 0 {
-				log.Println("sync: ownership changed, removing local services for", listing.ID[:12])
+				log.Println("sync: skipping non-local container and removing local services for", listing.ID[:12])
 				b.remove(listing.ID, true)
 			}
 			continue
@@ -227,8 +227,8 @@ func (b *Bridge) add(containerId string, quiet bool) {
 		log.Println("unable to inspect container:", containerId[:12], err)
 		return
 	}
-	if b.config.Coordinator != nil && !b.config.Coordinator.OwnsContainer(container) {
-		log.Println("ignored:", container.ID[:12], "not owner for container")
+	if !b.ownsContainer(container) {
+		log.Println("ignored:", container.ID[:12], "container not on local node")
 		return
 	}
 
@@ -753,15 +753,6 @@ func (b *Bridge) remove(containerId string, deregister bool) {
 
 func (b *Bridge) registerService(service *Service) error {
 	hash := serviceHash(service)
-	if b.config.Coordinator != nil {
-		allowed, err := b.config.Coordinator.BeforeRegister(service, hash)
-		if err != nil {
-			return err
-		}
-		if !allowed {
-			return nil
-		}
-	}
 	if existingHash, found := b.serviceHashes[service.ID]; found && existingHash == hash {
 		return nil
 	}
@@ -769,29 +760,14 @@ func (b *Bridge) registerService(service *Service) error {
 		return err
 	}
 	b.serviceHashes[service.ID] = hash
-	if b.config.Coordinator != nil {
-		return b.config.Coordinator.AfterRegister(service, hash)
-	}
 	return nil
 }
 
 func (b *Bridge) deregisterService(service *Service) error {
-	if b.config.Coordinator != nil {
-		allowed, err := b.config.Coordinator.BeforeDeregister(service)
-		if err != nil {
-			return err
-		}
-		if !allowed {
-			return nil
-		}
-	}
 	if err := retry(func() error { return b.registry.Deregister(service) }); err != nil {
 		return err
 	}
 	delete(b.serviceHashes, service.ID)
-	if b.config.Coordinator != nil {
-		return b.config.Coordinator.AfterDeregister(service)
-	}
 	return nil
 }
 
@@ -809,6 +785,20 @@ func (b *Bridge) seedServiceHashes(services []*Service) {
 	for _, extService := range services {
 		b.serviceHashes[extService.ID] = serviceHash(extService)
 	}
+}
+
+func (b *Bridge) ownsContainer(container *dockerapi.Container) bool {
+	if b.config.LocalNodeID == "" {
+		return true
+	}
+	if container == nil {
+		return false
+	}
+	nodeID := ""
+	if container.Node != nil {
+		nodeID = container.Node.ID
+	}
+	return nodeID == b.config.LocalNodeID
 }
 
 // bit set on ExitCode if it represents an exit via a signal

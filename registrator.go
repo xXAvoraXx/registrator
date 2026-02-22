@@ -35,6 +35,7 @@ func main() {
 	log.Printf("Starting registrator %s ...", Version)
 	cfg, err := loadAppConfig()
 	assert(err)
+	assert(applyCLIOverrides(&cfg, os.Args[1:]))
 	level, err := logrus.ParseLevel(cfg.Logging.Level)
 	if err != nil {
 		assert(err)

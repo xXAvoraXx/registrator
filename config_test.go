@@ -58,3 +58,31 @@ func TestRuntimeEnvOverrides(t *testing.T) {
 	testassert.Equal(t, 500, cfg.Runtime.RetryIntervalMs)
 	testassert.Equal(t, 60, cfg.Runtime.ResyncInterval)
 }
+
+func TestCLIOverridesEnvAndConfig(t *testing.T) {
+	t.Setenv("REGISTRATOR_RUNTIME_INTERNAL", "false")
+	t.Setenv("REGISTRATOR_RUNTIME_RETRY_ATTEMPTS", "10")
+	t.Setenv("REGISTRATOR_DISCOVERY_PROVIDER", "consul")
+	t.Setenv("REGISTRATOR_DISCOVERY_ADDRESS", "127.0.0.1")
+	t.Setenv("REGISTRATOR_DISCOVERY_PORT", "8500")
+
+	cfg := defaultAppConfig()
+	applyEnvOverrides(&cfg)
+
+	err := applyCLIOverrides(&cfg, []string{"-internal", "-retry-attempts=2", "etcd://10.0.0.9:2379"})
+	testassert.NoError(t, err)
+	testassert.True(t, cfg.Runtime.Internal)
+	testassert.Equal(t, 2, cfg.Runtime.RetryAttempts)
+	testassert.Equal(t, "etcd", cfg.Discovery.Provider)
+	testassert.Equal(t, "10.0.0.9", cfg.Discovery.Address)
+	testassert.Equal(t, 2379, cfg.Discovery.Port)
+}
+
+func TestCLIOverridesIgnoreEntrypointArgument(t *testing.T) {
+	cfg := defaultAppConfig()
+	err := applyCLIOverrides(&cfg, []string{"/bin/registrator", "consul://consul:8500"})
+	testassert.NoError(t, err)
+	testassert.Equal(t, "consul", cfg.Discovery.Provider)
+	testassert.Equal(t, "consul", cfg.Discovery.Address)
+	testassert.Equal(t, 8500, cfg.Discovery.Port)
+}

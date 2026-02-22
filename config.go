@@ -2,6 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -98,6 +102,81 @@ func loadAppConfig() (AppConfig, error) {
 	}
 	applyEnvOverrides(&cfg)
 	return cfg, nil
+}
+
+func applyCLIOverrides(cfg *AppConfig, args []string) error {
+	filteredArgs := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg == "/bin/registrator" || arg == "registrator" {
+			continue
+		}
+		filteredArgs = append(filteredArgs, arg)
+	}
+
+	fs := flag.NewFlagSet("registrator", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	internal := fs.Bool("internal", cfg.Runtime.Internal, "")
+	ip := fs.String("ip", cfg.Runtime.HostIP, "")
+	resync := fs.Int("resync", cfg.Runtime.ResyncInterval, "")
+	retryAttempts := fs.Int("retry-attempts", cfg.Runtime.RetryAttempts, "")
+	retryInterval := fs.Int("retry-interval", cfg.Runtime.RetryIntervalMs, "")
+	tags := fs.String("tags", cfg.Runtime.ForceTags, "")
+	ttl := fs.Int("ttl", cfg.Runtime.RefreshTTL, "")
+	ttlRefresh := fs.Int("ttl-refresh", cfg.Runtime.RefreshInterval, "")
+	deregister := fs.String("deregister", cfg.Runtime.DeregisterCheck, "")
+	cleanup := fs.Bool("cleanup", cfg.Runtime.Cleanup, "")
+	useIPFromLabel := fs.String("useIpFromLabel", cfg.Runtime.UseIPFromLabel, "")
+
+	if err := fs.Parse(filteredArgs); err != nil {
+		return err
+	}
+
+	cfg.Runtime.Internal = *internal
+	cfg.Runtime.HostIP = *ip
+	cfg.Runtime.ResyncInterval = *resync
+	cfg.Runtime.RetryAttempts = *retryAttempts
+	cfg.Runtime.RetryIntervalMs = *retryInterval
+	cfg.Runtime.ForceTags = *tags
+	cfg.Runtime.RefreshTTL = *ttl
+	cfg.Runtime.RefreshInterval = *ttlRefresh
+	cfg.Runtime.DeregisterCheck = *deregister
+	cfg.Runtime.Cleanup = *cleanup
+	cfg.Runtime.UseIPFromLabel = *useIPFromLabel
+
+	for _, arg := range fs.Args() {
+		if strings.Contains(arg, "://") {
+			if err := applyRegistryURIOverride(cfg, arg); err != nil {
+				return err
+			}
+			continue
+		}
+		return fmt.Errorf("unexpected argument: %s", arg)
+	}
+
+	return nil
+}
+
+func applyRegistryURIOverride(cfg *AppConfig, registryURI string) error {
+	parsed, err := url.Parse(registryURI)
+	if err != nil {
+		return err
+	}
+	if parsed.Scheme == "" {
+		return fmt.Errorf("invalid registry uri: %s", registryURI)
+	}
+	cfg.Discovery.Provider = parsed.Scheme
+	if host := parsed.Hostname(); host != "" {
+		cfg.Discovery.Address = host
+	}
+	if port := parsed.Port(); port != "" {
+		p, err := strconv.Atoi(port)
+		if err != nil {
+			return err
+		}
+		cfg.Discovery.Port = p
+	}
+	return nil
 }
 
 func applyEnvOverrides(cfg *AppConfig) {

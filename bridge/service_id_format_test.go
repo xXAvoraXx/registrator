@@ -121,4 +121,5 @@ func TestSwarmUsesLocalEngineHostnameWhenContainerNodeNameMissing(t *testing.T) 
 
 	assert.NotNil(t, service)
 	assert.Equal(t, "worker-hostname:svc.1.taskid:5432", service.ID)
+	assert.NotContains(t, service.ID, "ephemeral-container-id")
 }

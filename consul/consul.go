@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	dockerapi "github.com/fsouza/go-dockerclient"
 	"github.com/gliderlabs/registrator/bridge"
 	consulapi "github.com/hashicorp/consul/api"
 	"github.com/hashicorp/go-cleanhttp"
@@ -29,6 +30,22 @@ func (r *ConsulAdapter) interpolateService(script string, service *bridge.Servic
 }
 
 type Factory struct{}
+
+type RuntimeConfig struct {
+	Mode             string
+	Address          string
+	Port             int
+	ServiceName      string
+	UseDockerResolve bool
+}
+
+var runtimeDockerClient *dockerapi.Client
+var runtimeConfig RuntimeConfig
+
+func ConfigureRuntime(docker *dockerapi.Client, cfg RuntimeConfig) {
+	runtimeDockerClient = docker
+	runtimeConfig = cfg
+}
 
 func (f *Factory) New(uri *url.URL) bridge.RegistryAdapter {
 	config := consulapi.DefaultConfig()
@@ -54,20 +71,23 @@ func (f *Factory) New(uri *url.URL) bridge.RegistryAdapter {
 	} else if uri.Host != "" {
 		config.Address = uri.Host
 	}
-	client, err := consulapi.NewClient(config)
-	if err != nil {
+	if _, err := consulapi.NewClient(config); err != nil {
 		log.Fatal("consul: ", uri.Scheme)
 	}
-	return &ConsulAdapter{client: client}
+	return &ConsulAdapter{baseConfig: config}
 }
 
 type ConsulAdapter struct {
-	client *consulapi.Client
+	baseConfig *consulapi.Config
 }
 
 // Ping will try to connect to consul by attempting to retrieve the current leader.
 func (r *ConsulAdapter) Ping() error {
-	status := r.client.Status()
+	client, err := r.client(nil)
+	if err != nil {
+		return err
+	}
+	status := client.Status()
 	leader, err := status.Leader()
 	if err != nil {
 		return err
@@ -78,6 +98,10 @@ func (r *ConsulAdapter) Ping() error {
 }
 
 func (r *ConsulAdapter) Register(service *bridge.Service) error {
+	client, err := r.client(service)
+	if err != nil {
+		return err
+	}
 	registration := new(consulapi.AgentServiceRegistration)
 	registration.ID = service.ID
 	registration.Name = service.Name
@@ -86,7 +110,7 @@ func (r *ConsulAdapter) Register(service *bridge.Service) error {
 	registration.Address = service.IP
 	registration.Check = r.buildCheck(service)
 	registration.Meta = service.Attrs
-	return r.client.Agent().ServiceRegister(registration)
+	return client.Agent().ServiceRegister(registration)
 }
 
 func (r *ConsulAdapter) buildCheck(service *bridge.Service) *consulapi.AgentServiceCheck {
@@ -149,7 +173,11 @@ func (r *ConsulAdapter) buildCheck(service *bridge.Service) *consulapi.AgentServ
 }
 
 func (r *ConsulAdapter) Deregister(service *bridge.Service) error {
-	return r.client.Agent().ServiceDeregister(service.ID)
+	client, err := r.client(service)
+	if err != nil {
+		return err
+	}
+	return client.Agent().ServiceDeregister(service.ID)
 }
 
 func (r *ConsulAdapter) Refresh(service *bridge.Service) error {
@@ -157,7 +185,11 @@ func (r *ConsulAdapter) Refresh(service *bridge.Service) error {
 }
 
 func (r *ConsulAdapter) Services() ([]*bridge.Service, error) {
-	services, err := r.client.Agent().Services()
+	client, err := r.client(nil)
+	if err != nil {
+		return []*bridge.Service{}, err
+	}
+	services, err := client.Agent().Services()
 	if err != nil {
 		return []*bridge.Service{}, err
 	}
@@ -175,4 +207,126 @@ func (r *ConsulAdapter) Services() ([]*bridge.Service, error) {
 		i++
 	}
 	return out, nil
+}
+
+func (r *ConsulAdapter) client(service *bridge.Service) (*consulapi.Client, error) {
+	config := *r.baseConfig
+	address, err := r.resolveAddress(service)
+	if err != nil {
+		return nil, err
+	}
+	if address != "" {
+		config.Address = address
+	}
+	return consulapi.NewClient(&config)
+}
+
+func (r *ConsulAdapter) resolveAddress(service *bridge.Service) (string, error) {
+	mode := runtimeConfig.Mode
+	if mode == "" {
+		return r.baseConfig.Address, nil
+	}
+	if service != nil {
+		if v := service.Attrs["service.discovery.mode"]; v != "" {
+			mode = v
+		}
+		if v := service.Attrs["service.discovery.address"]; v != "" {
+			return withDefaultPort(v), nil
+		}
+	}
+	switch mode {
+	case "service":
+		name := runtimeConfig.ServiceName
+		if service != nil {
+			if v := service.Attrs["service.discovery.name"]; v != "" {
+				name = v
+			}
+		}
+		if name == "" {
+			name = "consul"
+		}
+		return fmt.Sprintf("%s:%d", name, runtimeConfig.Port), nil
+	case "local":
+		if runtimeConfig.Address != "" {
+			return withDefaultPort(runtimeConfig.Address), nil
+		}
+		if !runtimeConfig.UseDockerResolve || runtimeDockerClient == nil {
+			return r.baseConfig.Address, nil
+		}
+		resolved, err := resolveLocalAgentAddress(runtimeDockerClient, service)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%s:%d", resolved, runtimeConfig.Port), nil
+	default:
+		if runtimeConfig.Address != "" {
+			return withDefaultPort(runtimeConfig.Address), nil
+		}
+		return r.baseConfig.Address, nil
+	}
+}
+
+func withDefaultPort(address string) string {
+	if strings.Contains(address, ":") {
+		return address
+	}
+	if runtimeConfig.Port == 0 {
+		return address
+	}
+	return fmt.Sprintf("%s:%d", address, runtimeConfig.Port)
+}
+
+func resolveLocalAgentAddress(docker *dockerapi.Client, service *bridge.Service) (string, error) {
+	targetNodeID := ""
+	if service != nil && service.Origin.ContainerID != "" {
+		container, err := docker.InspectContainer(service.Origin.ContainerID)
+		if err == nil && container.Node != nil {
+			targetNodeID = container.Node.ID
+		}
+	}
+	if targetNodeID == "" {
+		info, err := docker.Info()
+		if err == nil {
+			targetNodeID = info.Swarm.NodeID
+		}
+	}
+	containers, err := docker.ListContainers(dockerapi.ListContainersOptions{All: false})
+	if err != nil {
+		return "", err
+	}
+	for _, listing := range containers {
+		c, err := docker.InspectContainer(listing.ID)
+		if err != nil || c.Config == nil || c.NetworkSettings == nil {
+			continue
+		}
+		isAgent := c.Config.Labels["consul.agent"] == "true"
+		if !isAgent {
+			serviceName := runtimeConfig.ServiceName
+			if serviceName == "" {
+				serviceName = "consul"
+			}
+			if c.Config.Labels["com.docker.swarm.service.name"] == serviceName || strings.Contains(strings.TrimPrefix(c.Name, "/"), serviceName) {
+				isAgent = true
+			}
+		}
+		if !isAgent {
+			continue
+		}
+		if targetNodeID != "" && c.Node != nil && c.Node.ID != "" && c.Node.ID != targetNodeID {
+			continue
+		}
+		ip := c.NetworkSettings.IPAddress
+		if ip == "" {
+			for _, n := range c.NetworkSettings.Networks {
+				ip = n.IPAddress
+				if ip != "" {
+					break
+				}
+			}
+		}
+		if ip != "" {
+			return ip, nil
+		}
+	}
+	return "", fmt.Errorf("unable to resolve local consul agent for node %s", targetNodeID)
 }

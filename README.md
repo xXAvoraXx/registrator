@@ -9,6 +9,7 @@ This fork modernizes the original project with:
 - idempotent registration behavior to reduce duplicate writes
 - broader Docker event handling and periodic reconciliation
 - built-in health, readiness, and metrics endpoints
+- configuration-driven runtime (config file + env + runtime labels)
 
 ## Why this fork
 
@@ -26,6 +27,11 @@ The original `gliderlabs/registrator` is stable but largely unmaintained for mod
   - retries register/deregister operations with exponential backoff
 - **Node-local ownership enforcement**:
   - services are only processed for containers whose `container.Node.ID` matches the local Swarm node ID
+- **Config-first architecture**:
+  - no required runtime CLI flags
+  - base config is loaded from file
+  - environment variables override file values
+  - runtime container/service labels override both for that specific workload
 - **Expanded event coverage**:
   - `start`, `die`, `stop`, `pause`, `unpause`, `destroy`
   - health transitions (`health_status: healthy`, `health_status: unhealthy`)
@@ -62,6 +68,33 @@ At startup, registrator logs:
 
 Ownership is node-local: if an inspected container belongs to a different Swarm node, it is skipped and never registered by this instance.
 
+## Configuration model
+
+Configuration priority:
+
+1. Config file (`REGISTRATOR_CONFIG`, default `/etc/registrator/config.yaml`)
+2. Environment variable overrides
+3. Runtime container/service label overrides (`service.discovery.*`, `service.name`)
+
+Supported environment variables:
+
+```
+REGISTRATOR_DISCOVERY_PROVIDER=consul
+REGISTRATOR_DISCOVERY_MODE=local
+REGISTRATOR_DISCOVERY_ADDRESS=
+REGISTRATOR_DISCOVERY_PORT=8500
+REGISTRATOR_DISCOVERY_SERVICE_NAME=consul
+REGISTRATOR_DISCOVERY_USE_DOCKER_RESOLVE=true
+
+REGISTRATOR_SERVICE_NAME_SOURCE=service.name
+REGISTRATOR_SERVICE_LABEL_KEY=service.name
+REGISTRATOR_SERVICE_ID_FORMAT={hostname}:{name}:{port}
+
+REGISTRATOR_DOCKER_ENDPOINT=unix:///tmp/docker.sock
+REGISTRATOR_DOCKER_SWARM_MODE=true
+REGISTRATOR_STATUS_ADDR=:8080
+```
+
 ## Deployment examples
 
 ### Standalone Docker
@@ -71,9 +104,9 @@ docker run -d \
   --name registrator \
   --net=host \
   -v /var/run/docker.sock:/tmp/docker.sock \
-  ghcr.io/xxavoraxx/registrator:latest \
-  -status-addr :8080 \
-  consul://127.0.0.1:8500
+  -e REGISTRATOR_STATUS_ADDR=:8080 \
+  -e REGISTRATOR_DISCOVERY_MODE=local \
+  ghcr.io/xxavoraxx/registrator:latest
 ```
 
 ### Docker Swarm (global mode)
@@ -84,21 +117,16 @@ docker service create \
   --mode global \
   --mount type=bind,src=/var/run/docker.sock,dst=/tmp/docker.sock \
   --network host \
-  ghcr.io/xxavoraxx/registrator:latest \
-  -resync=30 \
-  -status-addr :8080 \
-  consul://consul.service.consul:8500
+  --env REGISTRATOR_STATUS_ADDR=:8080 \
+  --env REGISTRATOR_DISCOVERY_MODE=service \
+  --env REGISTRATOR_DISCOVERY_SERVICE_NAME=consul \
+  ghcr.io/xxavoraxx/registrator:latest
 ```
 
 ## Consul integration
 
-Use the backend URI as final positional argument:
-
-```bash
-registrator consul://consul.service.consul:8500
-```
-
-All existing service metadata conventions (`SERVICE_*`) remain supported.
+Discovery provider and addressing are configured through config/env/labels (not required CLI URI flags).  
+In `Discovery.Mode=local`, Registrator resolves the local Consul agent via Docker API for fresh registration attempts (no IP cache).
 
 ## Swarm manager metadata resolution
 
@@ -115,40 +143,12 @@ On worker nodes, it can query manager nodes in sorted order (with backoff retrie
 
 ## Upgrade notes from original registrator
 
-- Keep existing backend URI argument model and adapter semantics
-- New flags were added (`-status-addr`, `-log-level`, `-advertise-mode`, `-advertise-ip-override`, `-manager-api-port`)
+- Runtime configuration is now config-driven (file + env + runtime labels)
+- CLI flag dependency has been removed from the main execution path
 
 ## Configuration reference
 
-### Core flags
-
-- `-ip` host IP override for published ports
-- `-internal` register internal container networking instead of host published ports
-- `-explicit` only register workloads with explicit service naming metadata
-- `-useIpFromLabel` load address from a container label
-- `-tags` append tags to all services (template-enabled)
-- `-cleanup` remove dangling services discovered during cleanup pass
-- `-deregister` `always|on-success`
-- `-advertise-mode` `node-ip|service-vip|custom`
-- `-advertise-ip-override` explicit address used by advertise mode
-
-### Reliability and sync
-
-- `-resync` periodic full synchronization interval (seconds)
-- `-retry-attempts` backend connection retry attempts (`-1` = infinite)
-- `-retry-interval` delay between backend connection retries (milliseconds)
-- `-ttl` service TTL value
-- `-ttl-refresh` TTL refresh interval
-
-### Runtime/observability
-
-- `-status-addr` bind address for `/healthz`, `/readyz`, `/metrics`
-- `-log-level` logging verbosity (`debug|info|warn|error`)
-- `-manager-api-port` manager Docker API port for worker-side manager metadata resolution
-
-### Environment variables
-
-- `DOCKER_HOST` Docker API endpoint (defaults to `/tmp/docker.sock` on Unix)
+See the **Configuration model** section for currently supported `REGISTRATOR_*` environment variables and precedence rules.
 
 ## Production best practices
 

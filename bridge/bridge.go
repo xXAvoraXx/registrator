@@ -321,23 +321,36 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 	}
 
 	metadata, metadataFromPort := serviceMetaData(container.Config, port.ExposedPort)
+	runtimeLabels := make(map[string]string)
+	for k, v := range container.Config.Labels {
+		runtimeLabels[k] = v
+	}
+	if serviceID := container.Config.Labels["com.docker.swarm.service.id"]; serviceID != "" {
+		service, err := b.docker.InspectService(serviceID)
+		if err == nil {
+			for k, v := range service.Spec.Labels {
+				runtimeLabels[k] = v
+			}
+		}
+	}
+	metadata = applyRuntimeOverrides(metadata, runtimeLabels)
 
 	ignore := mapDefault(metadata, "ignore", "")
 	if ignore != "" {
 		return nil
 	}
 
-	serviceName := mapDefault(metadata, "name", "")
+	serviceName := b.resolveServiceName(metadata, container, defaultName)
+	if serviceName == "" && b.config.Explicit {
+		return nil
+	}
 	if serviceName == "" {
-		if b.config.Explicit {
-			return nil
-		}
 		serviceName = defaultName
 	}
 
 	service := new(Service)
 	service.Origin = port
-	service.ID = hostname + ":" + container.Name[1:] + ":" + port.ExposedPort
+	service.ID = b.resolveServiceID(hostname, container.Name[1:], port.ExposedPort)
 	service.Name = serviceName
 	if isgroup && !metadataFromPort["name"] {
 		service.Name += "-" + port.ExposedPort
@@ -799,6 +812,52 @@ func (b *Bridge) ownsContainer(container *dockerapi.Container) bool {
 		nodeID = container.Node.ID
 	}
 	return nodeID == b.config.LocalNodeID
+}
+
+func applyRuntimeOverrides(metadata map[string]string, labels map[string]string) map[string]string {
+	out := make(map[string]string, len(metadata))
+	for k, v := range metadata {
+		out[k] = v
+	}
+	for key, value := range labels {
+		switch key {
+		case "service.discovery.provider", "service.discovery.port", "service.discovery.mode", "service.discovery.name", "service.discovery.address":
+			out[key] = value
+		case "service.name":
+			out["name"] = value
+		}
+	}
+	return out
+}
+
+func (b *Bridge) resolveServiceName(metadata map[string]string, container *dockerapi.Container, defaultName string) string {
+	switch b.config.NameSource {
+	case "container.name":
+		return strings.TrimPrefix(container.Name, "/")
+	case "label":
+		labelKey := b.config.NameLabelKey
+		if labelKey == "" {
+			labelKey = "service.name"
+		}
+		if v := container.Config.Labels[labelKey]; v != "" {
+			return v
+		}
+	}
+	if v := mapDefault(metadata, "name", ""); v != "" {
+		return v
+	}
+	return defaultName
+}
+
+func (b *Bridge) resolveServiceID(hostname, name, port string) string {
+	idFormat := b.config.IDFormat
+	if idFormat == "" {
+		idFormat = "{hostname}:{name}:{port}"
+	}
+	id := strings.ReplaceAll(idFormat, "{hostname}", hostname)
+	id = strings.ReplaceAll(id, "{name}", name)
+	id = strings.ReplaceAll(id, "{port}", port)
+	return id
 }
 
 // bit set on ExitCode if it represents an exit via a signal

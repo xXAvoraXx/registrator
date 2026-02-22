@@ -3,6 +3,7 @@ package bridge
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net"
@@ -28,6 +29,7 @@ type Bridge struct {
 	registry       RegistryAdapter
 	docker         *dockerapi.Client
 	services       map[string][]*Service
+	serviceHashes  map[string]string
 	deadContainers map[string]*DeadContainer
 	config         Config
 }
@@ -48,6 +50,7 @@ func New(docker *dockerapi.Client, adapterUri string, config Config) (*Bridge, e
 		config:         config,
 		registry:       factory.New(uri),
 		services:       make(map[string][]*Service),
+		serviceHashes:  make(map[string]string),
 		deadContainers: make(map[string]*DeadContainer),
 	}, nil
 }
@@ -107,14 +110,35 @@ func (b *Bridge) Sync(quiet bool) {
 
 	log.Printf("Syncing services on %d containers", len(containers))
 
+	extServices, err := b.registry.Services()
+	if err == nil {
+		b.seedServiceHashes(extServices)
+	} else {
+		log.Println("unable to list backend services during sync:", err)
+	}
+
 	// NOTE: This assumes reregistering will do the right thing, i.e. nothing..
 	for _, listing := range containers {
+		container, inspectErr := b.docker.InspectContainer(listing.ID)
+		if inspectErr != nil {
+			if !quiet {
+				log.Println("unable to inspect container during sync:", listing.ID[:12], inspectErr)
+			}
+			continue
+		}
+		if !b.ownsContainer(container) {
+			if existing := b.services[listing.ID]; len(existing) > 0 {
+				log.Println("sync: skipping non-local container and removing local services for", listing.ID[:12])
+				b.remove(listing.ID, true)
+			}
+			continue
+		}
 		services := b.services[listing.ID]
 		if services == nil {
 			b.add(listing.ID, quiet)
 		} else {
 			for _, service := range services {
-				err := b.registry.Register(service)
+				err := b.registerService(service)
 				if err != nil {
 					log.Println("sync register failed:", service, err)
 				}
@@ -203,6 +227,10 @@ func (b *Bridge) add(containerId string, quiet bool) {
 		log.Println("unable to inspect container:", containerId[:12], err)
 		return
 	}
+	if !b.ownsContainer(container) {
+		log.Println("ignored:", container.ID[:12], "container not on local node")
+		return
+	}
 
 	ports := make(map[string]ServicePort)
 
@@ -215,6 +243,18 @@ func (b *Bridge) add(containerId string, quiet bool) {
 	// Extract runtime port mappings, relevant when using --net=bridge
 	for port, published := range container.NetworkSettings.Ports {
 		ports[string(port)] = servicePort(container, port, published)
+	}
+	if b.config.ResolveSwarm != nil {
+		if swarmPorts, resolveErr := b.config.ResolveSwarm(container); resolveErr != nil {
+			if !quiet {
+				log.Println("swarm port resolution failed:", container.ID[:12], resolveErr)
+			}
+		} else {
+			for _, resolved := range swarmPorts {
+				key := fmt.Sprintf("%s/%s", resolved.ExposedPort, resolved.PortType)
+				ports[key] = resolved
+			}
+		}
 	}
 
 	if len(ports) == 0 && !quiet {
@@ -242,7 +282,7 @@ func (b *Bridge) add(containerId string, quiet bool) {
 			}
 			continue
 		}
-		err := b.registry.Register(service)
+		err := b.registerService(service)
 		if err != nil {
 			log.Println("register failed:", service, err)
 			continue
@@ -254,6 +294,14 @@ func (b *Bridge) add(containerId string, quiet bool) {
 
 func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 	container := port.container
+	if container == nil {
+		var err error
+		container, err = b.docker.InspectContainer(port.ContainerID)
+		if err != nil {
+			log.Println("unable to inspect container for service creation:", port.ContainerID, err)
+			return nil
+		}
+	}
 	defaultName := strings.Split(path.Base(container.Config.Image), ":")[0]
 
 	// not sure about this logic. kind of want to remove it.
@@ -273,23 +321,40 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 	}
 
 	metadata, metadataFromPort := serviceMetaData(container.Config, port.ExposedPort)
+	runtimeLabels := make(map[string]string)
+	for k, v := range container.Config.Labels {
+		runtimeLabels[k] = v
+	}
+	if serviceID := container.Config.Labels["com.docker.swarm.service.id"]; serviceID != "" {
+		service, err := b.docker.InspectService(serviceID)
+		if err == nil {
+			for k, v := range service.Spec.Labels {
+				runtimeLabels[k] = v
+			}
+		} else {
+			log.Println("unable to inspect swarm service labels for container", container.ID[:12], "service", serviceID, "error", err)
+		}
+	}
+	metadata = applyRuntimeOverrides(metadata, runtimeLabels)
 
 	ignore := mapDefault(metadata, "ignore", "")
 	if ignore != "" {
 		return nil
 	}
 
-	serviceName := mapDefault(metadata, "name", "")
+	serviceName := b.resolveServiceName(metadata, container, defaultName)
+	// Explicit mode requires the name to come from configured metadata/label source.
+	// If no explicit name is present, this container port is intentionally skipped.
+	if serviceName == "" && b.config.Explicit {
+		return nil
+	}
 	if serviceName == "" {
-		if b.config.Explicit {
-			return nil
-		}
 		serviceName = defaultName
 	}
 
 	service := new(Service)
 	service.Origin = port
-	service.ID = hostname + ":" + container.Name[1:] + ":" + port.ExposedPort
+	service.ID = b.resolveServiceID(hostname, container.Name[1:], port.ExposedPort)
 	service.Name = serviceName
 	if isgroup && !metadataFromPort["name"] {
 		service.Name += "-" + port.ExposedPort
@@ -683,7 +748,7 @@ func (b *Bridge) remove(containerId string, deregister bool) {
 	if deregister {
 		deregisterAll := func(services []*Service) {
 			for _, service := range services {
-				err := b.registry.Deregister(service)
+				err := b.deregisterService(service)
 				if err != nil {
 					log.Println("deregister failed:", service.ID, err)
 					continue
@@ -701,6 +766,102 @@ func (b *Bridge) remove(containerId string, deregister bool) {
 		b.deadContainers[containerId] = &DeadContainer{b.config.RefreshTtl, b.services[containerId]}
 	}
 	delete(b.services, containerId)
+}
+
+func (b *Bridge) registerService(service *Service) error {
+	hash := serviceHash(service)
+	if existingHash, found := b.serviceHashes[service.ID]; found && existingHash == hash {
+		return nil
+	}
+	if err := retry(func() error { return b.registry.Register(service) }); err != nil {
+		return err
+	}
+	b.serviceHashes[service.ID] = hash
+	return nil
+}
+
+func (b *Bridge) deregisterService(service *Service) error {
+	if err := retry(func() error { return b.registry.Deregister(service) }); err != nil {
+		return err
+	}
+	delete(b.serviceHashes, service.ID)
+	return nil
+}
+
+func (b *Bridge) ServiceCount() int {
+	b.Lock()
+	defer b.Unlock()
+	count := 0
+	for _, services := range b.services {
+		count += len(services)
+	}
+	return count
+}
+
+func (b *Bridge) seedServiceHashes(services []*Service) {
+	for _, extService := range services {
+		b.serviceHashes[extService.ID] = serviceHash(extService)
+	}
+}
+
+func (b *Bridge) ownsContainer(container *dockerapi.Container) bool {
+	if b.config.LocalNodeID == "" {
+		return true
+	}
+	if container == nil {
+		return false
+	}
+	nodeID := ""
+	if container.Node != nil {
+		nodeID = container.Node.ID
+	}
+	return nodeID == b.config.LocalNodeID
+}
+
+func applyRuntimeOverrides(metadata map[string]string, labels map[string]string) map[string]string {
+	out := make(map[string]string, len(metadata))
+	for k, v := range metadata {
+		out[k] = v
+	}
+	for key, value := range labels {
+		switch key {
+		case "service.discovery.provider", "service.discovery.port", "service.discovery.mode", "service.discovery.name", "service.discovery.address":
+			out[key] = value
+		case "service.name":
+			out["name"] = value
+		}
+	}
+	return out
+}
+
+func (b *Bridge) resolveServiceName(metadata map[string]string, container *dockerapi.Container, defaultName string) string {
+	switch b.config.NameSource {
+	case "container.name":
+		return strings.TrimPrefix(container.Name, "/")
+	case "label":
+		labelKey := b.config.NameLabelKey
+		if labelKey == "" {
+			labelKey = "service.name"
+		}
+		if v := container.Config.Labels[labelKey]; v != "" {
+			return v
+		}
+	}
+	if v := mapDefault(metadata, "name", ""); v != "" {
+		return v
+	}
+	return defaultName
+}
+
+func (b *Bridge) resolveServiceID(hostname, name, port string) string {
+	idFormat := b.config.IDFormat
+	if idFormat == "" {
+		idFormat = "{hostname}:{name}:{port}"
+	}
+	id := strings.ReplaceAll(idFormat, "{hostname}", hostname)
+	id = strings.ReplaceAll(id, "{name}", name)
+	id = strings.ReplaceAll(id, "{port}", port)
+	return id
 }
 
 // bit set on ExitCode if it represents an exit via a signal

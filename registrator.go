@@ -2,42 +2,24 @@ package main
 
 import (
 	"errors"
-	"flag"
-	"fmt"
 	"log"
 	"os"
-	"runtime"
-	"strings"
+	"sync/atomic"
 	"time"
 
 	dockerapi "github.com/fsouza/go-dockerclient"
 	"github.com/gliderlabs/pkg/usage"
 	"github.com/gliderlabs/registrator/bridge"
+	"github.com/gliderlabs/registrator/consul"
+	"github.com/sirupsen/logrus"
 )
 
 var Version string
 
 var versionChecker = usage.NewChecker("registrator", Version)
 
-var hostIp = flag.String("ip", "", "IP for ports mapped to the host")
-var internal = flag.Bool("internal", false, "Use internal ports instead of published ones")
-var explicit = flag.Bool("explicit", false, "Only register containers which have SERVICE_NAME label set")
-var useIpFromLabel = flag.String("useIpFromLabel", "", "Use IP which is stored in a label assigned to the container")
-var refreshInterval = flag.Int("ttl-refresh", 0, "Frequency with which service TTLs are refreshed")
-var refreshTtl = flag.Int("ttl", 0, "TTL for services (default is no expiry)")
-var forceTags = flag.String("tags", "", "Append tags for all registered services (supports Go template)")
-var resyncInterval = flag.Int("resync", 0, "Frequency with which services are resynchronized")
-var deregister = flag.String("deregister", "always", "Deregister exited services \"always\" or \"on-success\"")
-var retryAttempts = flag.Int("retry-attempts", 0, "Max retry attempts to establish a connection with the backend. Use -1 for infinite retries")
-var retryInterval = flag.Int("retry-interval", 2000, "Interval (in millisecond) between retry-attempts.")
-var cleanup = flag.Bool("cleanup", false, "Remove dangling services")
-
-func getopt(name, def string) string {
-	if env := os.Getenv(name); env != "" {
-		return env
-	}
-	return def
-}
+var eventsProcessed uint64
+var reconcileRuns uint64
 
 func assert(err error) {
 	if err != nil {
@@ -51,85 +33,77 @@ func main() {
 		os.Exit(0)
 	}
 	log.Printf("Starting registrator %s ...", Version)
-
-	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s [options] <registry URI>\n\n", os.Args[0])
-		flag.PrintDefaults()
+	cfg, err := loadAppConfig()
+	assert(err)
+	level, err := logrus.ParseLevel(cfg.Logging.Level)
+	if err != nil {
+		assert(err)
 	}
-
-	flag.Parse()
-
-	if flag.NArg() != 1 {
-		if flag.NArg() == 0 {
-			fmt.Fprint(os.Stderr, "Missing required argument for registry URI.\n\n")
-		} else {
-			fmt.Fprintln(os.Stderr, "Extra unparsed arguments:")
-			fmt.Fprintln(os.Stderr, " ", strings.Join(flag.Args()[1:], " "))
-			fmt.Fprint(os.Stderr, "Options should come before the registry URI argument.\n\n")
-		}
-		flag.Usage()
-		os.Exit(2)
+	logrus.SetLevel(level)
+	if cfg.Docker.Endpoint == "" {
+		assert(errors.New("docker endpoint must be configured"))
 	}
-
-	if *hostIp != "" {
-		log.Println("Forcing host IP to", *hostIp)
-	}
-
-	if (*refreshTtl == 0 && *refreshInterval > 0) || (*refreshTtl > 0 && *refreshInterval == 0) {
-		assert(errors.New("-ttl and -ttl-refresh must be specified together or not at all"))
-	} else if *refreshTtl > 0 && *refreshTtl <= *refreshInterval {
-		assert(errors.New("-ttl must be greater than -ttl-refresh"))
-	}
-
-	if *retryInterval <= 0 {
-		assert(errors.New("-retry-interval must be greater than 0"))
-	}
-
-	dockerHost := os.Getenv("DOCKER_HOST")
-	if dockerHost == "" {
-		if runtime.GOOS != "windows" {
-			os.Setenv("DOCKER_HOST", "unix:///tmp/docker.sock")
-		} else {
-			os.Setenv("DOCKER_HOST", "npipe:////./pipe/docker_engine")
-		}
-	}
-
-	docker, err := dockerapi.NewClientFromEnv()
+	docker, err := dockerapi.NewClient(cfg.Docker.Endpoint)
 	assert(err)
 
-	if *deregister != "always" && *deregister != "on-success" {
-		assert(errors.New("-deregister must be \"always\" or \"on-success\""))
+	swarmInfo := detectSwarmRuntime(docker)
+	resolver := newSwarmPortResolver(docker, swarmInfo, cfg.Runtime.AdvertiseMode, cfg.Runtime.AdvertiseIPOverride, cfg.Runtime.ManagerAPIPort)
+	if cfg.Discovery.Provider == "consul" {
+		consul.ConfigureRuntime(docker, consul.RuntimeConfig{
+			Mode:             cfg.Discovery.Mode,
+			Address:          cfg.Discovery.Address,
+			Port:             cfg.Discovery.Port,
+			ServiceName:      cfg.Discovery.ServiceName,
+			UseDockerResolve: cfg.Discovery.UseDockerResolve,
+		})
 	}
-
-	b, err := bridge.New(docker, flag.Arg(0), bridge.Config{
-		HostIp:          *hostIp,
-		Internal:        *internal,
-		Explicit:        *explicit,
-		UseIpFromLabel:  *useIpFromLabel,
-		ForceTags:       *forceTags,
-		RefreshTtl:      *refreshTtl,
-		RefreshInterval: *refreshInterval,
-		DeregisterCheck: *deregister,
-		Cleanup:         *cleanup,
+	b, err := bridge.New(docker, buildRegistryURI(cfg), bridge.Config{
+		HostIp:          cfg.Runtime.HostIP,
+		Internal:        cfg.Runtime.Internal,
+		Explicit:        cfg.Runtime.Explicit,
+		UseIpFromLabel:  cfg.Runtime.UseIPFromLabel,
+		ForceTags:       cfg.Runtime.ForceTags,
+		RefreshTtl:      cfg.Runtime.RefreshTTL,
+		RefreshInterval: cfg.Runtime.RefreshInterval,
+		DeregisterCheck: cfg.Runtime.DeregisterCheck,
+		Cleanup:         cfg.Runtime.Cleanup,
+		LocalNodeID:     swarmInfo.NodeID,
+		ResolveSwarm:    resolver.ResolveSwarmPorts,
+		NameSource:      cfg.Service.NameSource,
+		NameLabelKey:    cfg.Service.LabelKey,
+		IDFormat:        cfg.Service.IDFormat,
 	})
-
 	assert(err)
+
+	logrus.WithFields(logrus.Fields{
+		"enabled":            swarmInfo.Enabled,
+		"node_id":            swarmInfo.NodeID,
+		"node_role":          swarmInfo.Role,
+		"node_address":       swarmInfo.NodeAddr,
+		"running_as_service": swarmInfo.RunningAsService,
+		"swarm_service_id":   swarmInfo.SwarmServiceID,
+	}).Info("runtime swarm status")
+
+	if cfg.Runtime.StatusAddr != "" {
+		go serveStatus(cfg.Runtime.StatusAddr, b, &eventsProcessed, &reconcileRuns)
+	}
 
 	attempt := 0
-	for *retryAttempts == -1 || attempt <= *retryAttempts {
-		log.Printf("Connecting to backend (%v/%v)", attempt, *retryAttempts)
+	retryAttempts := cfg.Runtime.RetryAttempts
+	retryInterval := cfg.Runtime.RetryIntervalMs
+	for retryAttempts == -1 || attempt <= retryAttempts {
+		log.Printf("Connecting to backend (%v/%v)", attempt, retryAttempts)
 
 		err = b.Ping()
 		if err == nil {
 			break
 		}
 
-		if err != nil && attempt == *retryAttempts {
+		if err != nil && attempt == retryAttempts {
 			assert(err)
 		}
 
-		time.Sleep(time.Duration(*retryInterval) * time.Millisecond)
+		time.Sleep(time.Duration(retryInterval) * time.Millisecond)
 		attempt++
 	}
 
@@ -139,12 +113,14 @@ func main() {
 	log.Println("Listening for Docker events ...")
 
 	b.Sync(false)
+	atomic.AddUint64(&reconcileRuns, 1)
 
 	quit := make(chan struct{})
 
 	// Start the TTL refresh timer
-	if *refreshInterval > 0 {
-		ticker := time.NewTicker(time.Duration(*refreshInterval) * time.Second)
+	refreshInterval := cfg.Runtime.RefreshInterval
+	if refreshInterval > 0 {
+		ticker := time.NewTicker(time.Duration(refreshInterval) * time.Second)
 		go func() {
 			for {
 				select {
@@ -159,13 +135,15 @@ func main() {
 	}
 
 	// Start the resync timer if enabled
-	if *resyncInterval > 0 {
-		resyncTicker := time.NewTicker(time.Duration(*resyncInterval) * time.Second)
+	resyncInterval := cfg.Runtime.ResyncInterval
+	if resyncInterval > 0 {
+		resyncTicker := time.NewTicker(time.Duration(resyncInterval) * time.Second)
 		go func() {
 			for {
 				select {
 				case <-resyncTicker.C:
 					b.Sync(true)
+					atomic.AddUint64(&reconcileRuns, 1)
 				case <-quit:
 					resyncTicker.Stop()
 					return
@@ -176,10 +154,17 @@ func main() {
 
 	// Process Docker events
 	for msg := range events {
+		atomic.AddUint64(&eventsProcessed, 1)
 		switch msg.Status {
 		case "start":
 			go b.Add(msg.ID)
 		case "die":
+			go b.RemoveOnExit(msg.ID)
+		case "stop", "pause", "destroy":
+			go b.Remove(msg.ID)
+		case "unpause", "health_status: healthy", "health_status:healthy":
+			go b.Add(msg.ID)
+		case "health_status: unhealthy", "health_status:unhealthy":
 			go b.RemoveOnExit(msg.ID)
 		}
 	}

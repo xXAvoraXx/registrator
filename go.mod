@@ -1,18 +1,21 @@
 module github.com/gliderlabs/registrator
 
-go 1.17
+go 1.22
 
 require (
 	github.com/buger/jsonparser v1.1.1
 	github.com/cenkalti/backoff v2.0.0+incompatible
 	github.com/coreos/go-etcd v2.0.0+incompatible
+	github.com/docker/docker v17.12.0-ce-rc1.0.20180412203414-a422774e593b+incompatible
 	github.com/fsouza/go-dockerclient v1.2.0
 	github.com/gliderlabs/pkg v0.0.0-20161206023812-36f28d47ec7a
 	github.com/hashicorp/consul v1.0.7
 	github.com/hashicorp/go-cleanhttp v0.5.0
 	github.com/samuel/go-zookeeper v0.0.0-20180130194729-c4fab1ac1bec
+	github.com/sirupsen/logrus v1.4.2
 	github.com/stretchr/testify v1.4.0
 	gopkg.in/coreos/go-etcd.v0 v0.4.6
+	gopkg.in/yaml.v2 v2.2.5
 )
 
 require (
@@ -22,7 +25,6 @@ require (
 	github.com/armon/go-metrics v0.3.9 // indirect
 	github.com/containerd/continuity v0.0.0-20180416230128-c6cef3483023 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/docker/docker v17.12.0-ce-rc1.0.20180412203414-a422774e593b+incompatible // indirect
 	github.com/docker/go-connections v0.3.0 // indirect
 	github.com/docker/go-units v0.3.3 // indirect
 	github.com/gogo/protobuf v1.1.1 // indirect
@@ -45,12 +47,10 @@ require (
 	github.com/pascaldekloe/goe v0.1.0 // indirect
 	github.com/pkg/errors v0.8.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/sirupsen/logrus v1.4.2 // indirect
 	golang.org/x/crypto v0.0.0-20190923035154-9ee001bba392 // indirect
 	golang.org/x/net v0.0.0-20190923162816-aa69164e4478 // indirect
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e // indirect
 	golang.org/x/sys v0.0.0-20200122134326-e047566fdf82 // indirect
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
-	gopkg.in/yaml.v2 v2.2.5 // indirect
 	gotest.tools v2.2.0+incompatible // indirect
 )

@@ -1,83 +1,218 @@
-# Registrator
+# Registrator (Swarm-Aware Fork)
 
-Service registry bridge for Docker.
+Registrator automatically registers and deregisters Docker workloads in service discovery backends (for example, Consul), while continuously reconciling runtime state.
 
-[![Circle CI](https://circleci.com/gh/gliderlabs/registrator.png?style=shield)](https://circleci.com/gh/gliderlabs/registrator)
-[![Docker pulls](https://img.shields.io/docker/pulls/gliderlabs/registrator.svg)](https://hub.docker.com/r/gliderlabs/registrator/)
-[![IRC Channel](https://img.shields.io/badge/irc-%23gliderlabs-blue.svg)](https://kiwiirc.com/client/irc.freenode.net/#gliderlabs)
-<br /><br />
+This fork modernizes the original project with:
 
-Registrator automatically registers and deregisters services for any Docker
-container by inspecting containers as they come online. Registrator
-supports pluggable service registries, which currently includes
-[Consul](http://www.consul.io/), [etcd](https://github.com/coreos/etcd) and
-[SkyDNS 2](https://github.com/skynetservices/skydns/).
+- Go modules and current Go toolchain support
+- Swarm runtime awareness (manager/worker detection)
+- idempotent registration behavior to reduce duplicate writes
+- broader Docker event handling and periodic reconciliation
+- built-in health, readiness, and metrics endpoints
+- configuration-driven runtime (config file + env + runtime labels)
 
-Full documentation available at http://gliderlabs.com/registrator
+## Why this fork
 
-## Getting Registrator
+The original `gliderlabs/registrator` is stable but largely unmaintained for modern Swarm-centric production deployments. This fork focuses on reliability and deterministic behavior in clustered environments while preserving the core bridge model and adapter compatibility.
 
-Get the latest release, master, or any version of Registrator via [Docker Hub](https://registry.hub.docker.com/u/gliderlabs/registrator/):
+## Key differences from original project
 
-	$ docker pull gliderlabs/registrator:latest
+- **Swarm-aware startup introspection**:
+  - detects Swarm state
+  - logs node ID, node address, node role
+  - detects whether registrator runs as a Swarm service task
+- **Deterministic/idempotent registration path**:
+  - hashes service metadata before writing
+  - skips writes when backend state is already equivalent
+  - retries register/deregister operations with exponential backoff
+- **Node-local ownership enforcement**:
+  - services are only processed for containers whose `container.Node.ID` matches the local Swarm node ID
+- **Config-first architecture**:
+  - no required runtime CLI flags
+  - base config is loaded from file
+  - environment variables override file values
+  - runtime container/service labels override both for that specific workload
+- **Expanded event coverage**:
+  - `start`, `die`, `stop`, `pause`, `unpause`, `destroy`
+  - health transitions (`health_status: healthy`, `health_status: unhealthy`)
+- **Operational endpoints**:
+  - `/healthz`
+  - `/readyz`
+  - `/metrics` (Prometheus text format)
 
-Latest tag always points to the latest release. There is also a `:master` tag
-and version tags to pin to specific releases.
+## Architecture overview
 
-## Using Registrator
+Current implementation is intentionally incremental and keeps existing adapter contracts:
 
-The quickest way to see Registrator in action is our
-[Quickstart](https://gliderlabs.com/registrator/latest/user/quickstart)
-tutorial. Otherwise, jump to the [Run
-Reference](https://gliderlabs.com/registrator/latest/user/run) in the User
-Guide. Typically, running Registrator looks like this:
+- `registrator.go` – process bootstrap, docker event loop, retry setup, timers
+- `bridge/` – container inspection, service model derivation, idempotent register/remove flow
+- backend adapters – Consul, Consul KV, etcd, SkyDNS2, ZooKeeper
 
-    $ docker run -d \
-        --name=registrator \
-        --net=host \
-        --volume=/var/run/docker.sock:/tmp/docker.sock \
-        gliderlabs/registrator:latest \
-          consul://localhost:8500
+Core runtime loops:
 
-## CLI Options
+1. connect to Docker and backend
+2. detect runtime/Swarm node metadata
+3. subscribe to Docker events
+4. perform initial sync
+5. process events + optional TTL refresh + optional periodic resync
+
+## Swarm awareness behavior
+
+At startup, registrator logs:
+
+- whether Swarm is enabled
+- node ID
+- node role (`manager` or `worker`)
+- node address
+- whether process is running as a Swarm service task
+
+Ownership is node-local: if an inspected container belongs to a different Swarm node, it is skipped and never registered by this instance.
+
+## Configuration model
+
+Configuration priority:
+
+1. Config file (`REGISTRATOR_CONFIG`, default `/etc/registrator/config.yaml`)
+2. Environment variable overrides
+3. Runtime container/service label overrides (`service.discovery.*`, `service.name`)
+
+Supported environment variables:
+
 ```
-Usage of /bin/registrator:
-  /bin/registrator [options] <registry URI>
+REGISTRATOR_DISCOVERY_PROVIDER=consul
+REGISTRATOR_DISCOVERY_MODE=local
+REGISTRATOR_DISCOVERY_ADDRESS=
+REGISTRATOR_DISCOVERY_PORT=8500
+REGISTRATOR_DISCOVERY_SERVICE_NAME=consul
+REGISTRATOR_DISCOVERY_USE_DOCKER_RESOLVE=true
 
-  -cleanup=false: Remove dangling services
-  -deregister="always": Deregister exited services "always" or "on-success"
-  -explicit=false: Only register containers which have SERVICE_NAME label set
-  -internal=false: Use internal ports instead of published ones
-  -ip="": IP for ports mapped to the host
-  -resync=0: Frequency with which services are resynchronized
-  -retry-attempts=0: Max retry attempts to establish a connection with the backend. Use -1 for infinite retries
-  -retry-interval=2000: Interval (in millisecond) between retry-attempts.
-  -tags="": Append tags for all registered services (supports Go template)
-  -ttl=0: TTL for services (default is no expiry)
-  -ttl-refresh=0: Frequency with which service TTLs are refreshed
+REGISTRATOR_SERVICE_NAME_SOURCE=service.name
+REGISTRATOR_SERVICE_LABEL_KEY=service.name
+REGISTRATOR_SERVICE_ID_FORMAT={hostname}:{name}:{port}
+
+REGISTRATOR_DOCKER_ENDPOINT=unix:///tmp/docker.sock
+REGISTRATOR_DOCKER_SWARM_MODE=true
+REGISTRATOR_STATUS_ADDR=:8080
 ```
 
-## Contributing
+## Installation / Kurulum
 
-Pull requests are welcome! We recommend getting feedback before starting by
-opening a [GitHub issue](https://github.com/gliderlabs/registrator/issues) or
-discussing in [Slack](http://glider-slackin.herokuapp.com/).
+### Prerequisites
 
-Also check out our Developer Guide on [Contributing
-Backends](https://gliderlabs.com/registrator/latest/dev/backends) and [Staging
-Releases](https://gliderlabs.com/registrator/latest/dev/releases).
+- Docker Engine (Swarm optional)
+- Access to Docker socket from registrator container (`/var/run/docker.sock` -> `/tmp/docker.sock`)
+- A discovery backend (default examples use Consul)
 
-## Sponsors and Thanks
+### Option 1: Build and run binary locally
 
-Big thanks to Weave for sponsoring, Michael Crosby for
-[skydock](https://github.com/crosbymichael/skydock), and the Consul mailing list
-for inspiration.
+```bash
+git clone https://github.com/xXAvoraXx/registrator.git
+cd registrator
+go build -o registrator .
 
-For a full list of sponsors, see
-[SPONSORS](https://github.com/gliderlabs/registrator/blob/master/SPONSORS).
+# optional config file
+mkdir -p /etc/registrator
+cat >/etc/registrator/config.yaml <<'YAML'
+discovery:
+  provider: consul
+  mode: local
+  port: 8500
+  serviceName: consul
+docker:
+  endpoint: unix:///tmp/docker.sock
+logging:
+  level: info
+YAML
+
+REGISTRATOR_CONFIG=/etc/registrator/config.yaml ./registrator
+```
+
+### Option 2: Run with Docker image
+
+```bash
+docker run -d \
+  --name registrator \
+  -v /var/run/docker.sock:/tmp/docker.sock \
+  -e REGISTRATOR_DISCOVERY_PROVIDER=consul \
+  -e REGISTRATOR_DISCOVERY_MODE=local \
+  -e REGISTRATOR_DISCOVERY_PORT=8500 \
+  -e REGISTRATOR_STATUS_ADDR=:8080 \
+  ghcr.io/xxavoraxx/registrator:latest
+```
+
+### Option 3: Swarm global deployment
+
+Use the **Docker Swarm (global mode)** example below; it is the recommended production install pattern.
+
+## Deployment examples
+
+### Standalone Docker
+
+```bash
+docker run -d \
+  --name registrator \
+  --net=host \
+  -v /var/run/docker.sock:/tmp/docker.sock \
+  -e REGISTRATOR_STATUS_ADDR=:8080 \
+  -e REGISTRATOR_DISCOVERY_MODE=local \
+  ghcr.io/xxavoraxx/registrator:latest
+```
+
+### Docker Swarm (global mode)
+
+```bash
+docker service create \
+  --name registrator \
+  --mode global \
+  --mount type=bind,src=/var/run/docker.sock,dst=/tmp/docker.sock \
+  --network host \
+  --env REGISTRATOR_STATUS_ADDR=:8080 \
+  --env REGISTRATOR_DISCOVERY_MODE=service \
+  --env REGISTRATOR_DISCOVERY_SERVICE_NAME=consul \
+  ghcr.io/xxavoraxx/registrator:latest
+```
+
+## Consul integration
+
+Discovery provider and addressing are configured through config/env/labels (not required CLI URI flags).  
+In `Discovery.Mode=local`, Registrator resolves the local Consul agent via Docker API for fresh registration attempts (no IP cache).
+
+## Swarm manager metadata resolution
+
+For Swarm service containers, Registrator resolves service ports from Swarm service endpoint metadata.  
+On worker nodes, it can query manager nodes in sorted order (with backoff retries) for authoritative service `EndpointSpec.Ports`, reducing dependence on local worker-only container networking details.
+
+## Failure handling model
+
+- backend connection retries before startup completion (`-retry-attempts`, `-retry-interval`)
+- register/deregister operations retried with exponential backoff
+- optional periodic resync (`-resync`) to self-heal drift
+- readiness endpoint validates backend liveness through adapter `Ping()`
+- startup reconciliation seeds authoritative backend fingerprints before processing events, preventing duplicate writes after simultaneous restarts
+
+## Upgrade notes from original registrator
+
+- Runtime configuration is now config-driven (file + env + runtime labels)
+- CLI flag dependency has been removed from the main execution path
+
+## Configuration reference
+
+See the **Configuration model** section for currently supported `REGISTRATOR_*` environment variables and precedence rules.
+
+## Production best practices
+
+1. Run in Swarm global mode and mount `/var/run/docker.sock` to `/tmp/docker.sock`.
+2. Enable periodic reconciliation (`-resync`) to heal eventual drift.
+3. Scrape `/metrics` and alert on event/reconcile anomalies.
+4. Gate traffic rollouts on `/readyz`.
+5. Keep backend ACL/TLS hardening enabled (for Consul and other adapters where supported).
+
+## Development
+
+```bash
+go test ./...
+```
 
 ## License
 
 MIT
-
-<img src="https://ga-beacon.appspot.com/UA-58928488-2/registrator/readme?pixel" />

@@ -29,6 +29,11 @@ type Config struct {
 	RefreshInterval int
 	DeregisterCheck string
 	Cleanup         bool
+	LocalNodeID     string
+	ResolveSwarm    func(container *dockerapi.Container) ([]ServicePort, error)
+	NameSource      string
+	NameLabelKey    string
+	IDFormat        string
 }
 
 type Service struct {

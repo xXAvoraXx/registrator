@@ -29,3 +29,32 @@ func TestLoadConfigWithoutFileUsesDefaults(t *testing.T) {
 	testassert.NoError(t, err)
 	testassert.Equal(t, "consul", cfg.Discovery.Provider)
 }
+
+func TestRuntimeEnvOverrides(t *testing.T) {
+	t.Setenv("REGISTRATOR_RUNTIME_HOST_IP", "10.10.0.1")
+	t.Setenv("REGISTRATOR_RUNTIME_INTERNAL", "true")
+	t.Setenv("REGISTRATOR_RUNTIME_EXPLICIT", "true")
+	t.Setenv("REGISTRATOR_RUNTIME_FORCE_TAGS", "blue,canary")
+	t.Setenv("REGISTRATOR_RUNTIME_REFRESH_TTL", "15")
+	t.Setenv("REGISTRATOR_RUNTIME_REFRESH_INTERVAL", "30")
+	t.Setenv("REGISTRATOR_RUNTIME_DEREGISTER_CHECK", "on-success")
+	t.Setenv("REGISTRATOR_RUNTIME_CLEANUP", "false")
+	t.Setenv("REGISTRATOR_RUNTIME_RETRY_ATTEMPTS", "-1")
+	t.Setenv("REGISTRATOR_RUNTIME_RETRY_INTERVAL_MS", "500")
+	t.Setenv("REGISTRATOR_RUNTIME_RESYNC_INTERVAL", "60")
+
+	cfg := defaultAppConfig()
+	applyEnvOverrides(&cfg)
+
+	testassert.Equal(t, "10.10.0.1", cfg.Runtime.HostIP)
+	testassert.True(t, cfg.Runtime.Internal)
+	testassert.True(t, cfg.Runtime.Explicit)
+	testassert.Equal(t, "blue,canary", cfg.Runtime.ForceTags)
+	testassert.Equal(t, 15, cfg.Runtime.RefreshTTL)
+	testassert.Equal(t, 30, cfg.Runtime.RefreshInterval)
+	testassert.Equal(t, "on-success", cfg.Runtime.DeregisterCheck)
+	testassert.False(t, cfg.Runtime.Cleanup)
+	testassert.Equal(t, -1, cfg.Runtime.RetryAttempts)
+	testassert.Equal(t, 500, cfg.Runtime.RetryIntervalMs)
+	testassert.Equal(t, 60, cfg.Runtime.ResyncInterval)
+}

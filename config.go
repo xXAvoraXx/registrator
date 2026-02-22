@@ -69,7 +69,7 @@ func defaultAppConfig() AppConfig {
 	cfg.Service.NameSource = "service.name"
 	cfg.Service.LabelKey = "service.name"
 	cfg.Service.IDFormat = "{hostname}:{name}:{port}"
-	cfg.Docker.Endpoint = "unix:///tmp/docker.sock"
+	cfg.Docker.Endpoint = "unix:///var/run/docker.sock"
 	cfg.Docker.SwarmMode = true
 	cfg.Logging.Level = "info"
 	cfg.Runtime.DeregisterCheck = "always"

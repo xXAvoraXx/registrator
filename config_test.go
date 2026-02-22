@@ -28,6 +28,7 @@ func TestLoadConfigWithoutFileUsesDefaults(t *testing.T) {
 	cfg, err := loadAppConfig()
 	testassert.NoError(t, err)
 	testassert.Equal(t, "consul", cfg.Discovery.Provider)
+	testassert.Equal(t, "unix:///var/run/docker.sock", cfg.Docker.Endpoint)
 }
 
 func TestRuntimeEnvOverrides(t *testing.T) {

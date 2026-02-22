@@ -95,6 +95,55 @@ REGISTRATOR_DOCKER_SWARM_MODE=true
 REGISTRATOR_STATUS_ADDR=:8080
 ```
 
+## Installation / Kurulum
+
+### Prerequisites
+
+- Docker Engine (Swarm optional)
+- Access to Docker socket from registrator container (`/var/run/docker.sock` -> `/tmp/docker.sock`)
+- A discovery backend (default examples use Consul)
+
+### Option 1: Build and run binary locally
+
+```bash
+git clone https://github.com/xXAvoraXx/registrator.git
+cd registrator
+go build -o registrator .
+
+# optional config file
+mkdir -p /etc/registrator
+cat >/etc/registrator/config.yaml <<'YAML'
+discovery:
+  provider: consul
+  mode: local
+  port: 8500
+  serviceName: consul
+docker:
+  endpoint: unix:///tmp/docker.sock
+logging:
+  level: info
+YAML
+
+REGISTRATOR_CONFIG=/etc/registrator/config.yaml ./registrator
+```
+
+### Option 2: Run with Docker image
+
+```bash
+docker run -d \
+  --name registrator \
+  -v /var/run/docker.sock:/tmp/docker.sock \
+  -e REGISTRATOR_DISCOVERY_PROVIDER=consul \
+  -e REGISTRATOR_DISCOVERY_MODE=local \
+  -e REGISTRATOR_DISCOVERY_PORT=8500 \
+  -e REGISTRATOR_STATUS_ADDR=:8080 \
+  ghcr.io/xxavoraxx/registrator:latest
+```
+
+### Option 3: Swarm global deployment
+
+Use the **Docker Swarm (global mode)** example below; it is the recommended production install pattern.
+
 ## Deployment examples
 
 ### Standalone Docker

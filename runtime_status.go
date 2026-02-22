@@ -119,13 +119,19 @@ func serveStatus(addr string, b *bridge.Bridge, runtime swarmRuntime, eventsProc
 		_ = json.NewEncoder(w).Encode(runtime.peerInfo())
 	})
 	log.Printf("Serving status endpoints on %s", addr)
-	startPeerDiscovery(runtime, addr)
+	startPeerDiscovery(runtime, addr, func(info peerInfo) {
+		if info.Role != "manager" {
+			return
+		}
+		b.Sync(true)
+		atomic.AddUint64(reconcileRuns, 1)
+	})
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Printf("status server stopped: %v", err)
 	}
 }
 
-func startPeerDiscovery(runtime swarmRuntime, addr string) {
+func startPeerDiscovery(runtime swarmRuntime, addr string, onPeerDiscovered func(peerInfo)) {
 	if !runtime.RunningAsService || runtime.SwarmServiceName == "" {
 		return
 	}
@@ -137,14 +143,14 @@ func startPeerDiscovery(runtime swarmRuntime, addr string) {
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
-		discoverPeers(peerHost, port, runtime.OverlayIP)
+		discoverPeers(peerHost, port, runtime.OverlayIP, onPeerDiscovered)
 		for range ticker.C {
-			discoverPeers(peerHost, port, runtime.OverlayIP)
+			discoverPeers(peerHost, port, runtime.OverlayIP, onPeerDiscovered)
 		}
 	}()
 }
 
-func discoverPeers(peerHost, port, selfOverlayIP string) {
+func discoverPeers(peerHost, port, selfOverlayIP string, onPeerDiscovered func(peerInfo)) {
 	ips, err := net.LookupIP(peerHost)
 	if err != nil {
 		logPeerDiscoveryState("dns:"+peerHost, fmt.Sprintf("peer discovery DNS lookup failed for %s: %v", peerHost, err))
@@ -171,6 +177,9 @@ func discoverPeers(peerHost, port, selfOverlayIP string) {
 			continue
 		}
 		peerDiscoveryLogState.Store(key, signature)
+		if onPeerDiscovered != nil {
+			onPeerDiscovered(info)
+		}
 		log.Printf("discovered peer service=%s task=%s node=%s ip=%s role=%s", info.ServiceName, info.TaskID, info.NodeID, info.OverlayIP, info.Role)
 	}
 }

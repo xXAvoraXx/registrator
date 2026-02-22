@@ -23,11 +23,13 @@ import (
 )
 
 var serviceIDPattern = regexp.MustCompile(`^(.+?):([a-zA-Z0-9][a-zA-Z0-9_.-]+):[0-9]+(?::udp)?$`)
+const aggregateServiceIDSuffix = ".all"
 
 type Bridge struct {
 	sync.Mutex
 	registry       RegistryAdapter
 	docker         *dockerapi.Client
+	localHostname  string
 	services       map[string][]*Service
 	serviceHashes  map[string]string
 	deadContainers map[string]*DeadContainer
@@ -44,9 +46,17 @@ func New(docker *dockerapi.Client, adapterUri string, config Config) (*Bridge, e
 		return nil, errors.New("unrecognized adapter: " + adapterUri)
 	}
 
+	localHostname := ""
+	if docker != nil {
+		if info, err := docker.Info(); err == nil {
+			localHostname = info.Name
+		}
+	}
+
 	log.Println("Using", uri.Scheme, "adapter:", uri)
 	return &Bridge{
 		docker:         docker,
+		localHostname:  localHostname,
 		config:         config,
 		registry:       factory.New(uri),
 		services:       make(map[string][]*Service),
@@ -280,6 +290,9 @@ func (b *Bridge) add(containerId string, quiet bool) {
 		} else {
 			for _, resolved := range swarmPorts {
 				key := fmt.Sprintf("%s/%s", resolved.ExposedPort, resolved.PortType)
+				if len(resolved.NetworkNames) > 0 {
+					key += "/" + resolved.NetworkNames[0]
+				}
 				ports[key] = resolved
 			}
 		}
@@ -317,6 +330,26 @@ func (b *Bridge) add(containerId string, quiet bool) {
 		}
 		b.services[container.ID] = append(b.services[container.ID], service)
 		log.Println("added:", container.ID[:12], service.ID)
+		if len(port.NetworkNames) == 1 {
+			networkName := port.NetworkNames[0]
+			networkSuffix := "." + networkName + "." + port.ExposedPort
+			if strings.HasSuffix(service.Name, networkSuffix) {
+				baseName := strings.TrimSuffix(service.Name, networkSuffix)
+				aggregate := *service
+				aggregate.Name = baseName
+				aggregate.ID = appendServiceIDNameSuffix(service.ID, aggregateServiceIDSuffix)
+				if aggregate.ID == service.ID {
+					continue
+				}
+				err := b.registerService(&aggregate)
+				if err != nil {
+					log.Println("register failed:", &aggregate, err)
+					continue
+				}
+				b.services[container.ID] = append(b.services[container.ID], &aggregate)
+				log.Println("added:", container.ID[:12], aggregate.ID)
+			}
+		}
 	}
 }
 
@@ -336,6 +369,8 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 	hostname := Hostname
 	if container.Node != nil && container.Node.Name != "" {
 		hostname = container.Node.Name
+	} else if b.localHostname != "" {
+		hostname = b.localHostname
 	}
 	if hostname == "" {
 		hostname = port.HostIP
@@ -385,9 +420,16 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 
 	service := new(Service)
 	service.Origin = port
-	service.ID = b.resolveServiceID(hostname, container.Name[1:], port.ExposedPort)
+	idName := container.Name[1:]
+	hasNetworkQualifier := len(port.NetworkNames) == 1
+	if hasNetworkQualifier {
+		idName = idName + "." + port.NetworkNames[0]
+	}
+	service.ID = b.resolveServiceID(hostname, idName, port.ExposedPort)
 	service.Name = serviceName
-	if isgroup && !metadataFromPort["name"] {
+	if hasNetworkQualifier && !metadataFromPort["name"] {
+		service.Name = fmt.Sprintf("%s.%s.%s", serviceName, port.NetworkNames[0], port.ExposedPort)
+	} else if isgroup && !metadataFromPort["name"] {
 		service.Name += "-" + port.ExposedPort
 	}
 	var p int
@@ -908,6 +950,20 @@ func (b *Bridge) resolveServiceID(hostname, name, port string) string {
 	id = strings.ReplaceAll(id, "{name}", name)
 	id = strings.ReplaceAll(id, "{port}", port)
 	return id
+}
+
+func appendServiceIDNameSuffix(id, suffix string) string {
+	udpSuffix := ""
+	baseID := id
+	if strings.HasSuffix(baseID, ":udp") {
+		udpSuffix = ":udp"
+		baseID = strings.TrimSuffix(baseID, ":udp")
+	}
+	lastColon := strings.LastIndex(baseID, ":")
+	if lastColon < 0 {
+		return id
+	}
+	return baseID[:lastColon] + suffix + baseID[lastColon:] + udpSuffix
 }
 
 // bit set on ExitCode if it represents an exit via a signal

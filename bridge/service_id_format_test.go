@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"strings"
 	"testing"
 
 	dockerapi "github.com/fsouza/go-dockerclient"
@@ -89,4 +90,80 @@ func TestSwarmUsesMachineHostnameInServiceID(t *testing.T) {
 	assert.NotNil(t, service)
 	assert.Equal(t, "worker-hostname:svc.1.taskid:5432", service.ID)
 	assert.ElementsMatch(t, []string{"app-net", "ingress"}, service.Tags)
+}
+
+func TestSwarmUsesLocalEngineHostnameWhenContainerNodeNameMissing(t *testing.T) {
+	previousHostname := Hostname
+	Hostname = "ephemeral-container-id"
+	defer func() { Hostname = previousHostname }()
+
+	container := &dockerapi.Container{
+		ID:   "abc123",
+		Name: "/svc.1.taskid",
+		Config: &dockerapi.Config{
+			Image: "postgres:16",
+		},
+		HostConfig:      &dockerapi.HostConfig{},
+		NetworkSettings: &dockerapi.NetworkSettings{IPAddress: "10.0.0.20"},
+	}
+
+	b := &Bridge{
+		config:        Config{},
+		localHostname: "worker-hostname",
+	}
+	service := b.newService(ServicePort{
+		HostIP:      "10.0.0.10",
+		HostPort:    "5432",
+		ExposedIP:   "10.0.0.20",
+		ExposedPort: "5432",
+		PortType:    "tcp",
+		container:   container,
+	}, false)
+
+	assert.NotNil(t, service)
+	assert.Equal(t, "worker-hostname:svc.1.taskid:5432", service.ID)
+	assert.NotContains(t, service.ID, "ephemeral-container-id")
+}
+
+func TestSwarmNetworkSpecificServiceNameAndID(t *testing.T) {
+	previousHostname := Hostname
+	Hostname = "worker-hostname"
+	defer func() { Hostname = previousHostname }()
+
+	container := &dockerapi.Container{
+		ID:   "abc123",
+		Name: "/registrator.1.taskid",
+		Config: &dockerapi.Config{
+			Image: "registrator:latest",
+		},
+		HostConfig:      &dockerapi.HostConfig{},
+		NetworkSettings: &dockerapi.NetworkSettings{IPAddress: "10.0.0.20"},
+	}
+
+	b := &Bridge{config: Config{}}
+	service := b.newService(ServicePort{
+		HostIP:       "10.0.0.10",
+		HostPort:     "2375",
+		ExposedIP:    "10.0.0.20",
+		ExposedPort:  "2375",
+		PortType:     "tcp",
+		NetworkNames: []string{"dokploy-network"},
+		container:    container,
+	}, true)
+
+	assert.NotNil(t, service)
+	assert.Equal(t, "registrator.dokploy-network.2375", service.Name)
+	assert.True(t, strings.Contains(service.ID, ":registrator.1.taskid.dokploy-network:2375"))
+	assert.ElementsMatch(t, []string{"dokploy-network"}, service.Tags)
+}
+
+func TestAppendServiceIDNameSuffix(t *testing.T) {
+	assert.Equal(t,
+		"worker:taskid.dokploy-network.all:2375",
+		appendServiceIDNameSuffix("worker:taskid.dokploy-network:2375", ".all"),
+	)
+	assert.Equal(t,
+		"worker:taskid.dokploy-network.all:53:udp",
+		appendServiceIDNameSuffix("worker:taskid.dokploy-network:53:udp", ".all"),
+	)
 }

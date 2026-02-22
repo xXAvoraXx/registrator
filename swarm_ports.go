@@ -26,6 +26,11 @@ type swarmPortResolver struct {
 	managerAPIPort    int
 }
 
+type serviceNetwork struct {
+	name string
+	ip   string
+}
+
 func newSwarmPortResolver(docker *dockerapi.Client, runtime swarmRuntime, advertiseMode, advertiseOverride string, managerAPIPort int) *swarmPortResolver {
 	return &swarmPortResolver{
 		docker:            docker,
@@ -56,28 +61,44 @@ func (r *swarmPortResolver) ResolveSwarmPorts(container *dockerapi.Container) ([
 		ports = service.Endpoint.Ports
 	}
 	out := make([]bridge.ServicePort, 0, len(ports))
-	networkIP, networkNames := serviceNetworkInfo(container, service)
+	networks := serviceNetworksInfo(container, service)
 	for _, p := range ports {
 		if p.PublishedPort == 0 && p.TargetPort == 0 {
 			continue
-		}
-		hostIP := r.advertisedIP(service, networkIP)
-		if hostIP == "" {
-			hostIP = r.runtime.NodeAddr
 		}
 		portType := "tcp"
 		if string(p.Protocol) != "" {
 			portType = string(p.Protocol)
 		}
-		resolved := bridge.NewResolvedServicePort(
-			container,
-			hostIP,
-			fmt.Sprintf("%d", p.PublishedPort),
-			fmt.Sprintf("%d", p.TargetPort),
-			portType,
-		)
-		resolved.NetworkNames = networkNames
-		out = append(out, resolved)
+		if len(networks) == 0 {
+			hostIP := r.advertisedIP(service, "")
+			if hostIP == "" {
+				hostIP = r.runtime.NodeAddr
+			}
+			out = append(out, bridge.NewResolvedServicePort(
+				container,
+				hostIP,
+				fmt.Sprintf("%d", p.PublishedPort),
+				fmt.Sprintf("%d", p.TargetPort),
+				portType,
+			))
+			continue
+		}
+		for _, network := range networks {
+			hostIP := r.advertisedIP(service, network.ip)
+			if hostIP == "" {
+				hostIP = r.runtime.NodeAddr
+			}
+			resolved := bridge.NewResolvedServicePort(
+				container,
+				hostIP,
+				fmt.Sprintf("%d", p.PublishedPort),
+				fmt.Sprintf("%d", p.TargetPort),
+				portType,
+			)
+			resolved.NetworkNames = []string{network.name}
+			out = append(out, resolved)
+		}
 	}
 	return out, nil
 }
@@ -146,9 +167,9 @@ func managerStatusAddr(addr string) string {
 	return addr
 }
 
-func serviceNetworkInfo(container *dockerapi.Container, service *swarmapi.Service) (string, []string) {
+func serviceNetworksInfo(container *dockerapi.Container, service *swarmapi.Service) []serviceNetwork {
 	if container == nil || container.NetworkSettings == nil || len(container.NetworkSettings.Networks) == 0 {
-		return "", nil
+		return nil
 	}
 	wantedIDs := make(map[string]struct{})
 	if service != nil {
@@ -174,9 +195,13 @@ func serviceNetworkInfo(container *dockerapi.Container, service *swarmapi.Servic
 	}
 	sort.Strings(names)
 	if len(names) == 0 {
-		return "", nil
+		return nil
 	}
-	return ips[names[0]], names
+	out := make([]serviceNetwork, 0, len(names))
+	for _, name := range names {
+		out = append(out, serviceNetwork{name: name, ip: ips[name]})
+	}
+	return out
 }
 
 func (r *swarmPortResolver) advertisedIP(service *swarmapi.Service, preferredIP string) string {

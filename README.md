@@ -78,22 +78,42 @@ Configuration priority:
 
 ### Config file usage example
 
-Example `/etc/registrator/config.yaml`:
+Full example `/etc/registrator/config.yaml` (all available config keys):
 
 ```yaml
 discovery:
-  provider: consul
-  mode: service
-  serviceName: consul
-  port: 8500
+  provider: consul                # default: consul
+  mode: local                     # default: local
+  address: ""                     # default: empty (auto-resolved from mode)
+  port: 8500                      # default: 8500
+  serviceName: consul             # default: consul
+  useDockerResolve: true          # default: true
+service:
+  nameSource: service.name        # default: service.name
+  labelKey: service.name          # default: service.name
+  idFormat: "{hostname}:{name}:{port}" # default: {hostname}:{name}:{port}
 docker:
-  endpoint: unix:///tmp/docker.sock
+  endpoint: unix:///tmp/docker.sock # default: unix:///tmp/docker.sock
+  swarmMode: true                 # default: true
 runtime:
-  statusAddr: ":8080"
-  retryAttempts: 10
-  retryIntervalMs: 2000
+  hostIP: ""                      # default: empty
+  internal: false                 # default: false
+  explicit: false                 # default: false
+  useIPFromLabel: ""              # default: empty
+  forceTags: ""                   # default: empty
+  refreshTTL: 0                   # default: 0
+  refreshInterval: 0              # default: 0
+  deregisterCheck: always         # default: always
+  cleanup: true                   # default: true
+  retryAttempts: 10               # default: 10 (-1 = infinite)
+  retryIntervalMs: 2000           # default: 2000
+  resyncInterval: 30              # default: 30
+  statusAddr: ":8080"             # optional (health/readiness/metrics listener)
+  advertiseMode: node-ip          # default: node-ip
+  advertiseIPOverride: ""         # default: empty
+  managerAPIPort: 2375            # default: 2375
 logging:
-  level: info
+  level: info                     # default: info
 ```
 
 Run with local binary:

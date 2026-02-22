@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -81,6 +82,8 @@ type peerInfo struct {
 	Role        string `json:"role"`
 }
 
+var peerDiscoveryLogState sync.Map
+
 func (s swarmRuntime) peerInfo() peerInfo {
 	return peerInfo{
 		ServiceID:   s.SwarmServiceID,
@@ -134,9 +137,9 @@ func startPeerDiscovery(runtime swarmRuntime, addr string) {
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
-		for {
+		discoverPeers(peerHost, port, runtime.OverlayIP)
+		for range ticker.C {
 			discoverPeers(peerHost, port, runtime.OverlayIP)
-			<-ticker.C
 		}
 	}()
 }
@@ -144,6 +147,7 @@ func startPeerDiscovery(runtime swarmRuntime, addr string) {
 func discoverPeers(peerHost, port, selfOverlayIP string) {
 	ips, err := net.LookupIP(peerHost)
 	if err != nil {
+		log.Printf("peer discovery DNS lookup failed for %s: %v", peerHost, err)
 		return
 	}
 	client := &http.Client{Timeout: 2 * time.Second}
@@ -157,6 +161,12 @@ func discoverPeers(peerHost, port, selfOverlayIP string) {
 		if err != nil {
 			continue
 		}
+		signature := fmt.Sprintf("%s|%s|%s|%s|%s", info.ServiceName, info.TaskID, info.NodeID, info.OverlayIP, info.Role)
+		prev, seen := peerDiscoveryLogState.Load(peerIP)
+		if seen && prev == signature {
+			continue
+		}
+		peerDiscoveryLogState.Store(peerIP, signature)
 		log.Printf("discovered peer service=%s task=%s node=%s ip=%s role=%s", info.ServiceName, info.TaskID, info.NodeID, info.OverlayIP, info.Role)
 	}
 }

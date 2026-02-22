@@ -76,6 +76,43 @@ Configuration priority:
 2. Environment variable overrides
 3. Runtime container/service label overrides (`service.discovery.*`, `service.name`)
 
+### Config file usage example
+
+Example `/etc/registrator/config.yaml`:
+
+```yaml
+discovery:
+  provider: consul
+  mode: service
+  serviceName: consul
+  port: 8500
+docker:
+  endpoint: unix:///tmp/docker.sock
+runtime:
+  statusAddr: ":8080"
+  retryAttempts: 10
+  retryIntervalMs: 2000
+logging:
+  level: info
+```
+
+Run with local binary:
+
+```bash
+REGISTRATOR_CONFIG=/etc/registrator/config.yaml ./registrator
+```
+
+Run with Docker (bind-mount config file):
+
+```bash
+docker run -d \
+  --name registrator \
+  -v /var/run/docker.sock:/tmp/docker.sock \
+  -v /etc/registrator/config.yaml:/etc/registrator/config.yaml:ro \
+  -e REGISTRATOR_CONFIG=/etc/registrator/config.yaml \
+  ghcr.io/xxavoraxx/registrator:latest
+```
+
 Supported environment variables:
 
 | Environment Variable | Default | Description |

@@ -58,3 +58,52 @@ func TestRuntimeEnvOverrides(t *testing.T) {
 	testassert.Equal(t, 500, cfg.Runtime.RetryIntervalMs)
 	testassert.Equal(t, 60, cfg.Runtime.ResyncInterval)
 }
+
+func TestCLIOverridesEnvAndConfig(t *testing.T) {
+	t.Setenv("REGISTRATOR_RUNTIME_INTERNAL", "false")
+	t.Setenv("REGISTRATOR_RUNTIME_RETRY_ATTEMPTS", "10")
+	t.Setenv("REGISTRATOR_DISCOVERY_MODE", "local")
+
+	cfg := defaultAppConfig()
+	applyEnvOverrides(&cfg)
+
+	err := applyCLIOverrides(&cfg, []string{"-REGISTRATOR_RUNTIME_INTERNAL=true", "-REGISTRATOR_RUNTIME_RETRY_ATTEMPTS=2", "-REGISTRATOR_DISCOVERY_MODE=service"})
+	testassert.NoError(t, err)
+	testassert.True(t, cfg.Runtime.Internal)
+	testassert.Equal(t, 2, cfg.Runtime.RetryAttempts)
+	testassert.Equal(t, "service", cfg.Discovery.Mode)
+}
+
+func TestCLIOverridesRejectEntrypointArgument(t *testing.T) {
+	cfg := defaultAppConfig()
+	err := applyCLIOverrides(&cfg, []string{"/bin/registrator", "-REGISTRATOR_DISCOVERY_ADDRESS=consul"})
+	testassert.Error(t, err)
+}
+
+func TestCLIOverridesWithoutPositionalArguments(t *testing.T) {
+	cfg := defaultAppConfig()
+	err := applyCLIOverrides(&cfg, []string{"-REGISTRATOR_DISCOVERY_ADDRESS=consul"})
+	testassert.NoError(t, err)
+	testassert.Equal(t, "consul", cfg.Discovery.Address)
+}
+
+func TestCLIOverridesSupportServiceDiscoveryModeAlias(t *testing.T) {
+	cfg := defaultAppConfig()
+	cfg.Discovery.Mode = "local"
+	err := applyCLIOverrides(&cfg, []string{"-SERVICE_DISCOVERY_MODE=service"})
+	testassert.NoError(t, err)
+	testassert.Equal(t, "service", cfg.Discovery.Mode)
+}
+
+func TestCLIOverridesPreferRegistratorDiscoveryModeOverAlias(t *testing.T) {
+	cfg := defaultAppConfig()
+	err := applyCLIOverrides(&cfg, []string{"-REGISTRATOR_DISCOVERY_MODE=local", "-SERVICE_DISCOVERY_MODE=service"})
+	testassert.NoError(t, err)
+	testassert.Equal(t, "local", cfg.Discovery.Mode)
+}
+
+func TestCLIOverridesRejectLegacyPositionalURI(t *testing.T) {
+	cfg := defaultAppConfig()
+	err := applyCLIOverrides(&cfg, []string{"consul://consul:8500"})
+	testassert.Error(t, err)
+}

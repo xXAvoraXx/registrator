@@ -76,6 +76,72 @@ Configuration priority:
 2. Environment variable overrides
 3. Runtime container/service label overrides (`service.discovery.*`, `service.name`)
 
+### Config file usage example
+
+Full example `/etc/registrator/config.yaml` (all available config keys):
+
+```yaml
+discovery:
+  provider: consul                # default: consul
+  mode: local                     # default: local
+  address: ""                     # default: empty (uses serviceName in service mode, 127.0.0.1 in local mode)
+  port: 8500                      # default: 8500
+  serviceName: consul             # default: consul
+  useDockerResolve: true          # default: true
+service:
+  nameSource: service.name        # default: service.name
+  labelKey: service.name          # default: service.name
+  idFormat: "{hostname}:{name}:{port}" # default: {hostname}:{name}:{port}
+docker:
+  endpoint: unix:///tmp/docker.sock # default: unix:///tmp/docker.sock
+  swarmMode: true                 # default: true
+runtime:
+  hostIP: ""                      # default: empty
+  internal: false                 # default: false
+  explicit: false                 # default: false
+  useIPFromLabel: ""              # default: empty
+  forceTags: ""                   # default: empty
+  refreshTTL: 0                   # default: 0
+  refreshInterval: 0              # default: 0
+  deregisterCheck: always         # default: always
+  cleanup: true                   # default: true
+  retryAttempts: 10               # default: 10
+  retryIntervalMs: 2000           # default: 2000
+  resyncInterval: 30              # default: 30
+  statusAddr: ":8080"             # default: empty
+  advertiseMode: node-ip          # default: node-ip
+  advertiseIPOverride: ""         # default: empty
+  managerAPIPort: 2375            # default: 2375
+logging:
+  level: info                     # default: info
+```
+
+Notes:
+
+- Set `runtime.retryAttempts: -1` for infinite retry behavior.
+- `service.idFormat` placeholders: `{hostname}`, `{name}`, `{port}`, `{protocol}`.
+- `runtime.refreshTTL` and `runtime.refreshInterval` are disabled when `0`.
+- `runtime.deregisterCheck` supports `always` and `on-success`.
+
+Run with local binary:
+
+```bash
+REGISTRATOR_CONFIG=/etc/registrator/config.yaml ./registrator
+```
+
+Run with Docker (bind-mount config file):
+
+```bash
+docker run -d \
+  --name registrator \
+  -v /var/run/docker.sock:/tmp/docker.sock \
+  -v /etc/registrator/config.yaml:/etc/registrator/config.yaml:ro \
+  -e REGISTRATOR_CONFIG=/etc/registrator/config.yaml \
+  ghcr.io/xxavoraxx/registrator:latest
+```
+
+Image default command is `registrator`; do not set `/bin/registrator` entrypoint/path overrides.
+
 Supported environment variables:
 
 | Environment Variable | Default | Description |

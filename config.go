@@ -2,12 +2,20 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v2"
+)
+
+const (
+	flagRegistratorDiscoveryMode = "REGISTRATOR_DISCOVERY_MODE"
+	flagServiceDiscoveryMode     = "SERVICE_DISCOVERY_MODE"
 )
 
 type AppConfig struct {
@@ -98,6 +106,83 @@ func loadAppConfig() (AppConfig, error) {
 	}
 	applyEnvOverrides(&cfg)
 	return cfg, nil
+}
+
+func applyCLIOverrides(cfg *AppConfig, args []string) error {
+	fs := flag.NewFlagSet("registrator", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	discoveryProvider := fs.String("REGISTRATOR_DISCOVERY_PROVIDER", cfg.Discovery.Provider, "")
+	discoveryMode := fs.String(flagRegistratorDiscoveryMode, cfg.Discovery.Mode, "")
+	serviceDiscoveryMode := fs.String(flagServiceDiscoveryMode, cfg.Discovery.Mode, "")
+	discoveryAddress := fs.String("REGISTRATOR_DISCOVERY_ADDRESS", cfg.Discovery.Address, "")
+	discoveryPort := fs.Int("REGISTRATOR_DISCOVERY_PORT", cfg.Discovery.Port, "")
+	discoveryServiceName := fs.String("REGISTRATOR_DISCOVERY_SERVICE_NAME", cfg.Discovery.ServiceName, "")
+	discoveryUseDockerResolve := fs.Bool("REGISTRATOR_DISCOVERY_USE_DOCKER_RESOLVE", cfg.Discovery.UseDockerResolve, "")
+	serviceNameSource := fs.String("REGISTRATOR_SERVICE_NAME_SOURCE", cfg.Service.NameSource, "")
+	serviceLabelKey := fs.String("REGISTRATOR_SERVICE_LABEL_KEY", cfg.Service.LabelKey, "")
+	serviceIDFormat := fs.String("REGISTRATOR_SERVICE_ID_FORMAT", cfg.Service.IDFormat, "")
+	dockerEndpoint := fs.String("REGISTRATOR_DOCKER_ENDPOINT", cfg.Docker.Endpoint, "")
+	dockerSwarmMode := fs.Bool("REGISTRATOR_DOCKER_SWARM_MODE", cfg.Docker.SwarmMode, "")
+	statusAddr := fs.String("REGISTRATOR_STATUS_ADDR", cfg.Runtime.StatusAddr, "")
+	runtimeHostIP := fs.String("REGISTRATOR_RUNTIME_HOST_IP", cfg.Runtime.HostIP, "")
+	runtimeInternal := fs.Bool("REGISTRATOR_RUNTIME_INTERNAL", cfg.Runtime.Internal, "")
+	runtimeExplicit := fs.Bool("REGISTRATOR_RUNTIME_EXPLICIT", cfg.Runtime.Explicit, "")
+	runtimeForceTags := fs.String("REGISTRATOR_RUNTIME_FORCE_TAGS", cfg.Runtime.ForceTags, "")
+	runtimeRefreshTTL := fs.Int("REGISTRATOR_RUNTIME_REFRESH_TTL", cfg.Runtime.RefreshTTL, "")
+	runtimeRefreshInterval := fs.Int("REGISTRATOR_RUNTIME_REFRESH_INTERVAL", cfg.Runtime.RefreshInterval, "")
+	runtimeDeregisterCheck := fs.String("REGISTRATOR_RUNTIME_DEREGISTER_CHECK", cfg.Runtime.DeregisterCheck, "")
+	runtimeCleanup := fs.Bool("REGISTRATOR_RUNTIME_CLEANUP", cfg.Runtime.Cleanup, "")
+	runtimeRetryAttempts := fs.Int("REGISTRATOR_RUNTIME_RETRY_ATTEMPTS", cfg.Runtime.RetryAttempts, "")
+	runtimeRetryIntervalMs := fs.Int("REGISTRATOR_RUNTIME_RETRY_INTERVAL_MS", cfg.Runtime.RetryIntervalMs, "")
+	runtimeResyncInterval := fs.Int("REGISTRATOR_RUNTIME_RESYNC_INTERVAL", cfg.Runtime.ResyncInterval, "")
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	discoveryModeFlagProvided := false
+	serviceDiscoveryModeFlagProvided := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == flagRegistratorDiscoveryMode {
+			discoveryModeFlagProvided = true
+		}
+		if f.Name == flagServiceDiscoveryMode {
+			serviceDiscoveryModeFlagProvided = true
+		}
+	})
+
+	cfg.Discovery.Provider = *discoveryProvider
+	cfg.Discovery.Mode = *discoveryMode
+	cfg.Discovery.Address = *discoveryAddress
+	cfg.Discovery.Port = *discoveryPort
+	cfg.Discovery.ServiceName = *discoveryServiceName
+	cfg.Discovery.UseDockerResolve = *discoveryUseDockerResolve
+	if !discoveryModeFlagProvided && serviceDiscoveryModeFlagProvided {
+		cfg.Discovery.Mode = *serviceDiscoveryMode
+	}
+	cfg.Service.NameSource = *serviceNameSource
+	cfg.Service.LabelKey = *serviceLabelKey
+	cfg.Service.IDFormat = *serviceIDFormat
+	cfg.Docker.Endpoint = *dockerEndpoint
+	cfg.Docker.SwarmMode = *dockerSwarmMode
+	cfg.Runtime.StatusAddr = *statusAddr
+	cfg.Runtime.HostIP = *runtimeHostIP
+	cfg.Runtime.Internal = *runtimeInternal
+	cfg.Runtime.Explicit = *runtimeExplicit
+	cfg.Runtime.ForceTags = *runtimeForceTags
+	cfg.Runtime.RefreshTTL = *runtimeRefreshTTL
+	cfg.Runtime.RefreshInterval = *runtimeRefreshInterval
+	cfg.Runtime.DeregisterCheck = *runtimeDeregisterCheck
+	cfg.Runtime.Cleanup = *runtimeCleanup
+	cfg.Runtime.RetryAttempts = *runtimeRetryAttempts
+	cfg.Runtime.RetryIntervalMs = *runtimeRetryIntervalMs
+	cfg.Runtime.ResyncInterval = *runtimeResyncInterval
+
+	if extra := fs.Args(); len(extra) > 0 {
+		return fmt.Errorf("unexpected argument: %s", extra[0])
+	}
+
+	return nil
 }
 
 func applyEnvOverrides(cfg *AppConfig) {

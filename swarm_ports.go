@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"sort"
 	"strings"
@@ -111,6 +112,11 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 	if err == nil && serviceHasPublishedPorts(service) {
 		return service, nil
 	}
+	if err != nil {
+		log.Printf("swarm manager fallback: local service inspect failed for %s: %v", serviceID, err)
+	} else {
+		log.Printf("swarm manager fallback: local service inspect for %s has no published ports, querying managers", serviceID)
+	}
 	managers := r.managerNodeAddrs()
 	if len(managers) == 0 {
 		if err != nil {
@@ -118,16 +124,19 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 		}
 		return nil, fmt.Errorf("unable to inspect service %s: local inspection returned no published ports and no manager node address discovered (check swarm manager availability and Docker API access)", serviceID)
 	}
+	log.Printf("swarm manager fallback: querying manager Docker APIs for %s on port %d: %s", serviceID, r.managerAPIPort, strings.Join(managers, ","))
 	op := func() error {
 		for _, addr := range managers {
 			client, err := dockerapi.NewVersionedClient(fmt.Sprintf("tcp://%s:%d", addr, r.managerAPIPort), defaultDockerAPIVersion)
 			if err != nil {
+				log.Printf("swarm manager fallback: client init failed for manager %s service %s: %v", addr, serviceID, err)
 				continue
 			}
 			service, err = client.InspectService(serviceID)
 			if err == nil {
 				return nil
 			}
+			log.Printf("swarm manager fallback: manager inspect failed for %s via %s:%d: %v", serviceID, addr, r.managerAPIPort, err)
 		}
 		return fmt.Errorf("unable to inspect service %s from manager list (worker needs manager Docker API reachability on port %d)", serviceID, r.managerAPIPort)
 	}

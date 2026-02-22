@@ -179,6 +179,17 @@ func (b *Bridge) Sync(quiet bool) {
 			if !found {
 				log.Printf("stale: Removing service %s because it does not exist", listingId)
 				go b.RemoveOnExit(listingId)
+				continue
+			}
+			container, inspectErr := b.docker.InspectContainer(listingId)
+			if inspectErr != nil {
+				log.Printf("stale: Removing service %s because Docker inspect failed during cleanup: %v", listingId, inspectErr)
+				go b.Remove(listingId)
+				continue
+			}
+			if reason := cleanupUnhealthyReason(container); reason != "" {
+				log.Printf("stale: Removing service %s because %s", listingId, reason)
+				go b.Remove(listingId)
 			}
 		}
 
@@ -964,6 +975,19 @@ func appendServiceIDNameSuffix(id, suffix string) string {
 		return id
 	}
 	return baseID[:lastColon] + suffix + baseID[lastColon:] + udpSuffix
+}
+
+func cleanupUnhealthyReason(container *dockerapi.Container) string {
+	if container == nil {
+		return "container state unavailable"
+	}
+	if !container.State.Running {
+		return "container not running"
+	}
+	if strings.EqualFold(container.State.Health.Status, "unhealthy") {
+		return "container health is unhealthy"
+	}
+	return ""
 }
 
 // bit set on ExitCode if it represents an exit via a signal

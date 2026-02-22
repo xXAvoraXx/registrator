@@ -73,7 +73,11 @@ func TestFetchPeerInfoParsesResponse(t *testing.T) {
 }
 
 func TestDiscoverPeersCallsCallbackOncePerPeerSignature(t *testing.T) {
+	previousState := peerDiscoveryLogState
 	peerDiscoveryLogState = sync.Map{}
+	t.Cleanup(func() {
+		peerDiscoveryLogState = previousState
+	})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(peerInfo{
 			ServiceID:   "svc-1",

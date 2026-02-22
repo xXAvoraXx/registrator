@@ -264,6 +264,11 @@ For Swarm service containers, Registrator resolves service ports from Swarm serv
 On worker nodes, it can query manager nodes in sorted order (with backoff retries) for authoritative service `EndpointSpec.Ports`, reducing dependence on local worker-only container networking details.
 This communication path is worker -> Docker manager API (`runtime.managerAPIPort`), not registrator-to-registrator peer RPC.
 
+Troubleshooting:
+
+- If workers cannot resolve swarm service ports, verify manager Docker API reachability on `runtime.managerAPIPort` (default `2375`).
+- Publishing `2375` as an ingress port on the registrator service is not what this lookup uses; workers connect directly to manager node addresses from `docker node ls` metadata.
+
 ## Failure handling model
 
 - backend connection retries before startup completion (`-retry-attempts`, `-retry-interval`)

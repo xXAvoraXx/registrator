@@ -274,6 +274,12 @@ func withDefaultPort(address string) string {
 }
 
 func resolveLocalAgentAddress(docker *dockerapi.Client, service *bridge.Service) (string, error) {
+	registratorContainer, err := resolveRegistratorContainer(docker)
+	if err != nil {
+		return "", err
+	}
+	registratorNetworks := containerNetworkNames(registratorContainer)
+
 	targetNodeID := ""
 	if service != nil && service.Origin.ContainerID != "" {
 		container, err := docker.InspectContainer(service.Origin.ContainerID)
@@ -314,18 +320,48 @@ func resolveLocalAgentAddress(docker *dockerapi.Client, service *bridge.Service)
 		if targetNodeID != "" && c.Node != nil && c.Node.ID != "" && c.Node.ID != targetNodeID {
 			continue
 		}
-		ip := c.NetworkSettings.IPAddress
-		if ip == "" {
-			for _, n := range c.NetworkSettings.Networks {
-				ip = n.IPAddress
-				if ip != "" {
-					break
-				}
-			}
-		}
+		ip := selectSharedNetworkIP(registratorNetworks, c)
 		if ip != "" {
 			return ip, nil
 		}
 	}
-	return "", fmt.Errorf("unable to resolve local consul agent for node %s: no running container matched label consul.agent=true or service name %q (checked %d containers)", targetNodeID, serviceName, checked)
+	return "", fmt.Errorf("unable to resolve local consul agent for node %s: no running container matched label consul.agent=true or service name %q on a shared network (checked %d containers)", targetNodeID, serviceName, checked)
+}
+
+func resolveRegistratorContainer(docker *dockerapi.Client) (*dockerapi.Container, error) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return nil, fmt.Errorf("unable to resolve registrator hostname: %w", err)
+	}
+	container, err := docker.InspectContainer(hostname)
+	if err != nil {
+		return nil, fmt.Errorf("unable to inspect registrator container %q: %w", hostname, err)
+	}
+	if container == nil || container.NetworkSettings == nil {
+		return nil, fmt.Errorf("registrator container network settings not available for %q", hostname)
+	}
+	return container, nil
+}
+
+func containerNetworkNames(container *dockerapi.Container) map[string]struct{} {
+	names := make(map[string]struct{})
+	if container == nil || container.NetworkSettings == nil {
+		return names
+	}
+	for networkName := range container.NetworkSettings.Networks {
+		names[networkName] = struct{}{}
+	}
+	return names
+}
+
+func selectSharedNetworkIP(registratorNetworks map[string]struct{}, candidate *dockerapi.Container) string {
+	if candidate == nil || candidate.NetworkSettings == nil {
+		return ""
+	}
+	for networkName, network := range candidate.NetworkSettings.Networks {
+		if _, shared := registratorNetworks[networkName]; shared && network.IPAddress != "" {
+			return network.IPAddress
+		}
+	}
+	return ""
 }

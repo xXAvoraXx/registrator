@@ -59,6 +59,7 @@ type ServicePort struct {
 	ExposedPort       string
 	ExposedIP         string
 	PortType          string
+	NetworkNames      []string
 	ContainerHostname string
 	ContainerID       string
 	ContainerName     string

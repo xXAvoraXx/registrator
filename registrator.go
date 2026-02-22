@@ -47,7 +47,7 @@ func main() {
 	assert(err)
 
 	swarmInfo := detectSwarmRuntime(docker)
-	resolver := newSwarmPortResolver(docker, swarmInfo, "node-ip", "", 2375)
+	resolver := newSwarmPortResolver(docker, swarmInfo, cfg.Runtime.AdvertiseMode, cfg.Runtime.AdvertiseIPOverride, cfg.Runtime.ManagerAPIPort)
 	if cfg.Discovery.Provider == "consul" {
 		consul.ConfigureRuntime(docker, consul.RuntimeConfig{
 			Mode:             cfg.Discovery.Mode,
@@ -58,15 +58,15 @@ func main() {
 		})
 	}
 	b, err := bridge.New(docker, buildRegistryURI(cfg), bridge.Config{
-		HostIp:          "",
-		Internal:        false,
-		Explicit:        false,
-		UseIpFromLabel:  "",
-		ForceTags:       "",
-		RefreshTtl:      0,
-		RefreshInterval: 0,
-		DeregisterCheck: "always",
-		Cleanup:         true,
+		HostIp:          cfg.Runtime.HostIP,
+		Internal:        cfg.Runtime.Internal,
+		Explicit:        cfg.Runtime.Explicit,
+		UseIpFromLabel:  cfg.Runtime.UseIPFromLabel,
+		ForceTags:       cfg.Runtime.ForceTags,
+		RefreshTtl:      cfg.Runtime.RefreshTTL,
+		RefreshInterval: cfg.Runtime.RefreshInterval,
+		DeregisterCheck: cfg.Runtime.DeregisterCheck,
+		Cleanup:         cfg.Runtime.Cleanup,
 		LocalNodeID:     swarmInfo.NodeID,
 		ResolveSwarm:    resolver.ResolveSwarmPorts,
 		NameSource:      cfg.Service.NameSource,
@@ -84,13 +84,13 @@ func main() {
 		"swarm_service_id":   swarmInfo.SwarmServiceID,
 	}).Info("runtime swarm status")
 
-	if statusAddr := os.Getenv("REGISTRATOR_STATUS_ADDR"); statusAddr != "" {
-		go serveStatus(statusAddr, b, &eventsProcessed, &reconcileRuns)
+	if cfg.Runtime.StatusAddr != "" {
+		go serveStatus(cfg.Runtime.StatusAddr, b, &eventsProcessed, &reconcileRuns)
 	}
 
 	attempt := 0
-	retryAttempts := 10
-	retryInterval := 2000
+	retryAttempts := cfg.Runtime.RetryAttempts
+	retryInterval := cfg.Runtime.RetryIntervalMs
 	for retryAttempts == -1 || attempt <= retryAttempts {
 		log.Printf("Connecting to backend (%v/%v)", attempt, retryAttempts)
 
@@ -118,7 +118,7 @@ func main() {
 	quit := make(chan struct{})
 
 	// Start the TTL refresh timer
-	refreshInterval := 0
+	refreshInterval := cfg.Runtime.RefreshInterval
 	if refreshInterval > 0 {
 		ticker := time.NewTicker(time.Duration(refreshInterval) * time.Second)
 		go func() {
@@ -135,7 +135,7 @@ func main() {
 	}
 
 	// Start the resync timer if enabled
-	resyncInterval := 30
+	resyncInterval := cfg.Runtime.ResyncInterval
 	if resyncInterval > 0 {
 		resyncTicker := time.NewTicker(time.Duration(resyncInterval) * time.Second)
 		go func() {

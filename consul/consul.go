@@ -71,9 +71,6 @@ func (f *Factory) New(uri *url.URL) bridge.RegistryAdapter {
 	} else if uri.Host != "" {
 		config.Address = uri.Host
 	}
-	if _, err := consulapi.NewClient(config); err != nil {
-		log.Fatal("consul: ", uri.Scheme)
-	}
 	return &ConsulAdapter{baseConfig: config}
 }
 
@@ -294,17 +291,19 @@ func resolveLocalAgentAddress(docker *dockerapi.Client, service *bridge.Service)
 	if err != nil {
 		return "", err
 	}
+	checked := 0
+	serviceName := runtimeConfig.ServiceName
+	if serviceName == "" {
+		serviceName = "consul"
+	}
 	for _, listing := range containers {
+		checked++
 		c, err := docker.InspectContainer(listing.ID)
 		if err != nil || c.Config == nil || c.NetworkSettings == nil {
 			continue
 		}
 		isAgent := c.Config.Labels["consul.agent"] == "true"
 		if !isAgent {
-			serviceName := runtimeConfig.ServiceName
-			if serviceName == "" {
-				serviceName = "consul"
-			}
 			if c.Config.Labels["com.docker.swarm.service.name"] == serviceName || strings.Contains(strings.TrimPrefix(c.Name, "/"), serviceName) {
 				isAgent = true
 			}
@@ -328,5 +327,5 @@ func resolveLocalAgentAddress(docker *dockerapi.Client, service *bridge.Service)
 			return ip, nil
 		}
 	}
-	return "", fmt.Errorf("unable to resolve local consul agent for node %s", targetNodeID)
+	return "", fmt.Errorf("unable to resolve local consul agent for node %s: no running container matched label consul.agent=true or service name %q (checked %d containers)", targetNodeID, serviceName, checked)
 }

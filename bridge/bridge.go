@@ -331,6 +331,8 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 			for k, v := range service.Spec.Labels {
 				runtimeLabels[k] = v
 			}
+		} else {
+			log.Println("unable to inspect swarm service labels for container", container.ID[:12], "service", serviceID, "error", err)
 		}
 	}
 	metadata = applyRuntimeOverrides(metadata, runtimeLabels)
@@ -341,6 +343,8 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 	}
 
 	serviceName := b.resolveServiceName(metadata, container, defaultName)
+	// Explicit mode requires the name to come from configured metadata/label source.
+	// If no explicit name is present, this container port is intentionally skipped.
 	if serviceName == "" && b.config.Explicit {
 		return nil
 	}

@@ -15,6 +15,7 @@ require (
 	github.com/sirupsen/logrus v1.4.2
 	github.com/stretchr/testify v1.4.0
 	gopkg.in/coreos/go-etcd.v0 v0.4.6
+	gopkg.in/yaml.v2 v2.2.5
 )
 
 require (
@@ -51,6 +52,5 @@ require (
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e // indirect
 	golang.org/x/sys v0.0.0-20200122134326-e047566fdf82 // indirect
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
-	gopkg.in/yaml.v2 v2.2.5 // indirect
 	gotest.tools v2.2.0+incompatible // indirect
 )

@@ -31,6 +31,24 @@ type AppConfig struct {
 	Logging struct {
 		Level string `json:"level" yaml:"level"`
 	} `json:"logging" yaml:"logging"`
+	Runtime struct {
+		HostIP              string `json:"hostIP" yaml:"hostIP"`
+		Internal            bool   `json:"internal" yaml:"internal"`
+		Explicit            bool   `json:"explicit" yaml:"explicit"`
+		UseIPFromLabel      string `json:"useIPFromLabel" yaml:"useIPFromLabel"`
+		ForceTags           string `json:"forceTags" yaml:"forceTags"`
+		RefreshTTL          int    `json:"refreshTTL" yaml:"refreshTTL"`
+		RefreshInterval     int    `json:"refreshInterval" yaml:"refreshInterval"`
+		DeregisterCheck     string `json:"deregisterCheck" yaml:"deregisterCheck"`
+		Cleanup             bool   `json:"cleanup" yaml:"cleanup"`
+		RetryAttempts       int    `json:"retryAttempts" yaml:"retryAttempts"`
+		RetryIntervalMs     int    `json:"retryIntervalMs" yaml:"retryIntervalMs"`
+		ResyncInterval      int    `json:"resyncInterval" yaml:"resyncInterval"`
+		StatusAddr          string `json:"statusAddr" yaml:"statusAddr"`
+		AdvertiseMode       string `json:"advertiseMode" yaml:"advertiseMode"`
+		AdvertiseIPOverride string `json:"advertiseIPOverride" yaml:"advertiseIPOverride"`
+		ManagerAPIPort      int    `json:"managerAPIPort" yaml:"managerAPIPort"`
+	} `json:"runtime" yaml:"runtime"`
 }
 
 func defaultAppConfig() AppConfig {
@@ -46,6 +64,13 @@ func defaultAppConfig() AppConfig {
 	cfg.Docker.Endpoint = "unix:///tmp/docker.sock"
 	cfg.Docker.SwarmMode = true
 	cfg.Logging.Level = "info"
+	cfg.Runtime.DeregisterCheck = "always"
+	cfg.Runtime.Cleanup = true
+	cfg.Runtime.RetryAttempts = 10
+	cfg.Runtime.RetryIntervalMs = 2000
+	cfg.Runtime.ResyncInterval = 30
+	cfg.Runtime.AdvertiseMode = "node-ip"
+	cfg.Runtime.ManagerAPIPort = 2375
 	return cfg
 }
 
@@ -110,6 +135,14 @@ func applyEnvOverrides(cfg *AppConfig) {
 	}
 	if v := os.Getenv("REGISTRATOR_DOCKER_SWARM_MODE"); v != "" {
 		cfg.Docker.SwarmMode = strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("REGISTRATOR_STATUS_ADDR"); v != "" {
+		cfg.Runtime.StatusAddr = v
+	}
+	if v := os.Getenv("REGISTRATOR_RUNTIME_RESYNC_INTERVAL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Runtime.ResyncInterval = n
+		}
 	}
 }
 

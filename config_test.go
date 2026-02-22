@@ -74,11 +74,10 @@ func TestCLIOverridesEnvAndConfig(t *testing.T) {
 	testassert.Equal(t, "service", cfg.Discovery.Mode)
 }
 
-func TestCLIOverridesIgnoreEntrypointArgument(t *testing.T) {
+func TestCLIOverridesRejectEntrypointArgument(t *testing.T) {
 	cfg := defaultAppConfig()
 	err := applyCLIOverrides(&cfg, []string{"/bin/registrator", "-REGISTRATOR_DISCOVERY_ADDRESS=consul"})
-	testassert.NoError(t, err)
-	testassert.Equal(t, "consul", cfg.Discovery.Address)
+	testassert.Error(t, err)
 }
 
 func TestCLIOverridesSupportServiceDiscoveryModeAlias(t *testing.T) {

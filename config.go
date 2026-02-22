@@ -104,20 +104,15 @@ func loadAppConfig() (AppConfig, error) {
 }
 
 func applyCLIOverrides(cfg *AppConfig, args []string) error {
-	filteredArgs := make([]string, 0, len(args))
 	discoveryModeFlagProvided := false
 	serviceDiscoveryModeFlagProvided := false
 	for _, arg := range args {
-		if arg == "/bin/registrator" || arg == "registrator" {
-			continue
-		}
 		if arg == "-REGISTRATOR_DISCOVERY_MODE" || strings.HasPrefix(arg, "-REGISTRATOR_DISCOVERY_MODE=") {
 			discoveryModeFlagProvided = true
 		}
 		if arg == "-SERVICE_DISCOVERY_MODE" || strings.HasPrefix(arg, "-SERVICE_DISCOVERY_MODE=") {
 			serviceDiscoveryModeFlagProvided = true
 		}
-		filteredArgs = append(filteredArgs, arg)
 	}
 
 	fs := flag.NewFlagSet("registrator", flag.ContinueOnError)
@@ -148,7 +143,7 @@ func applyCLIOverrides(cfg *AppConfig, args []string) error {
 	runtimeRetryIntervalMs := fs.Int("REGISTRATOR_RUNTIME_RETRY_INTERVAL_MS", cfg.Runtime.RetryIntervalMs, "")
 	runtimeResyncInterval := fs.Int("REGISTRATOR_RUNTIME_RESYNC_INTERVAL", cfg.Runtime.ResyncInterval, "")
 
-	if err := fs.Parse(filteredArgs); err != nil {
+	if err := fs.Parse(args); err != nil {
 		return err
 	}
 

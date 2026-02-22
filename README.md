@@ -140,7 +140,7 @@ docker run -d \
   ghcr.io/xxavoraxx/registrator:latest
 ```
 
-Image default command is already `registrator`; you do not need to set an explicit `/bin/registrator` entrypoint.
+Image default command is `registrator`; do not set `/bin/registrator` entrypoint/path overrides.
 
 Supported environment variables:
 

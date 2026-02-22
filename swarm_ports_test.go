@@ -55,3 +55,21 @@ func TestServiceNetworksInfoUsesServiceVIPNetworks(t *testing.T) {
 		t.Fatalf("expected app network info, got %+v", networks[0])
 	}
 }
+
+func TestManagerAddrsFromNodesUsesManagerRoleWhenManagerStatusMissing(t *testing.T) {
+	nodes := []swarmapi.Node{
+		{
+			Spec:   swarmapi.NodeSpec{Role: swarmapi.NodeRoleManager},
+			Status: swarmapi.NodeStatus{Addr: "10.0.1.10"},
+		},
+		{
+			Spec:   swarmapi.NodeSpec{Role: swarmapi.NodeRoleWorker},
+			Status: swarmapi.NodeStatus{Addr: "10.0.1.20"},
+		},
+	}
+
+	addrs := managerAddrsFromNodes(nodes)
+	if len(addrs) != 1 || addrs[0] != "10.0.1.10" {
+		t.Fatalf("expected manager address from manager role, got %+v", addrs)
+	}
+}

@@ -136,16 +136,22 @@ func (r *swarmPortResolver) managerNodeAddrs() []string {
 	if err != nil {
 		return nil
 	}
+	return managerAddrsFromNodes(nodes)
+}
+
+func managerAddrsFromNodes(nodes []swarmapi.Node) []string {
 	addrSet := make(map[string]struct{})
 	for _, node := range nodes {
-		if node.ManagerStatus == nil {
+		if node.ManagerStatus == nil && node.Spec.Role != swarmapi.NodeRoleManager {
 			continue
 		}
 		if node.Status.Addr != "" {
 			addrSet[node.Status.Addr] = struct{}{}
 		}
-		if mgrAddr := managerStatusAddr(node.ManagerStatus.Addr); mgrAddr != "" {
-			addrSet[mgrAddr] = struct{}{}
+		if node.ManagerStatus != nil {
+			if mgrAddr := managerStatusAddr(node.ManagerStatus.Addr); mgrAddr != "" {
+				addrSet[mgrAddr] = struct{}{}
+			}
 		}
 	}
 	addrs := make([]string, 0, len(addrSet))

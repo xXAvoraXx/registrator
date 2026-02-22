@@ -30,7 +30,7 @@ func TestManagerStatusAddrStripsPort(t *testing.T) {
 	}
 }
 
-func TestServiceNetworkInfoUsesServiceVIPNetworks(t *testing.T) {
+func TestServiceNetworksInfoUsesServiceVIPNetworks(t *testing.T) {
 	container := &dockerapi.Container{
 		NetworkSettings: &dockerapi.NetworkSettings{
 			Networks: map[string]dockerapi.ContainerNetwork{
@@ -47,11 +47,11 @@ func TestServiceNetworkInfoUsesServiceVIPNetworks(t *testing.T) {
 		},
 	}
 
-	ip, names := serviceNetworkInfo(container, service)
-	if ip != "10.0.1.20" {
-		t.Fatalf("expected app network IP, got %q", ip)
+	networks := serviceNetworksInfo(container, service)
+	if len(networks) != 1 {
+		t.Fatalf("expected one network result, got %v", networks)
 	}
-	if len(names) != 1 || names[0] != "app" {
-		t.Fatalf("expected app network name, got %v", names)
+	if networks[0].name != "app" || networks[0].ip != "10.0.1.20" {
+		t.Fatalf("expected app network info, got %+v", networks[0])
 	}
 }

@@ -289,6 +289,9 @@ func (b *Bridge) add(containerId string, quiet bool) {
 		} else {
 			for _, resolved := range swarmPorts {
 				key := fmt.Sprintf("%s/%s", resolved.ExposedPort, resolved.PortType)
+				if len(resolved.NetworkNames) > 0 {
+					key += "/" + strings.Join(resolved.NetworkNames, ",")
+				}
 				ports[key] = resolved
 			}
 		}
@@ -326,6 +329,23 @@ func (b *Bridge) add(containerId string, quiet bool) {
 		}
 		b.services[container.ID] = append(b.services[container.ID], service)
 		log.Println("added:", container.ID[:12], service.ID)
+		if len(port.NetworkNames) == 1 {
+			networkName := port.NetworkNames[0]
+			networkSuffix := "." + networkName + "." + port.ExposedPort
+			baseName := strings.TrimSuffix(service.Name, networkSuffix)
+			if baseName != service.Name {
+				aggregate := *service
+				aggregate.Name = baseName
+				aggregate.ID = appendServiceIDNameSuffix(service.ID, ".all")
+				err := b.registerService(&aggregate)
+				if err != nil {
+					log.Println("register failed:", &aggregate, err)
+					continue
+				}
+				b.services[container.ID] = append(b.services[container.ID], &aggregate)
+				log.Println("added:", container.ID[:12], aggregate.ID)
+			}
+		}
 	}
 }
 
@@ -396,9 +416,15 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 
 	service := new(Service)
 	service.Origin = port
-	service.ID = b.resolveServiceID(hostname, container.Name[1:], port.ExposedPort)
+	idName := container.Name[1:]
+	if len(port.NetworkNames) == 1 {
+		idName = idName + "." + port.NetworkNames[0]
+	}
+	service.ID = b.resolveServiceID(hostname, idName, port.ExposedPort)
 	service.Name = serviceName
-	if isgroup && !metadataFromPort["name"] {
+	if len(port.NetworkNames) == 1 && !metadataFromPort["name"] {
+		service.Name = fmt.Sprintf("%s.%s.%s", serviceName, port.NetworkNames[0], port.ExposedPort)
+	} else if isgroup && !metadataFromPort["name"] {
 		service.Name += "-" + port.ExposedPort
 	}
 	var p int
@@ -919,6 +945,20 @@ func (b *Bridge) resolveServiceID(hostname, name, port string) string {
 	id = strings.ReplaceAll(id, "{name}", name)
 	id = strings.ReplaceAll(id, "{port}", port)
 	return id
+}
+
+func appendServiceIDNameSuffix(id, suffix string) string {
+	udpSuffix := ""
+	baseID := id
+	if strings.HasSuffix(baseID, ":udp") {
+		udpSuffix = ":udp"
+		baseID = strings.TrimSuffix(baseID, ":udp")
+	}
+	lastColon := strings.LastIndex(baseID, ":")
+	if lastColon < 0 {
+		return id
+	}
+	return baseID[:lastColon] + suffix + baseID[lastColon:] + udpSuffix
 }
 
 // bit set on ExitCode if it represents an exit via a signal

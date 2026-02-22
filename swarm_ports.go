@@ -107,11 +107,14 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 	if r.runtime.Role == "manager" {
 		return r.docker.InspectService(serviceID)
 	}
+	service, err := r.docker.InspectService(serviceID)
+	if err == nil && serviceHasPublishedPorts(service) {
+		return service, nil
+	}
 	managers := r.managerNodeAddrs()
 	if len(managers) == 0 {
 		return nil, fmt.Errorf("unable to inspect service %s from manager list: no manager node address discovered (check swarm manager availability and Docker API access)", serviceID)
 	}
-	var service *swarmapi.Service
 	op := func() error {
 		for _, addr := range managers {
 			client, err := dockerapi.NewVersionedClient(fmt.Sprintf("tcp://%s:%d", addr, r.managerAPIPort), defaultDockerAPIVersion)
@@ -127,8 +130,18 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 	}
 	exp := backoff.NewExponentialBackOff()
 	exp.MaxElapsedTime = managerRetryTimeout
-	err := backoff.Retry(op, exp)
+	err = backoff.Retry(op, exp)
 	return service, err
+}
+
+func serviceHasPublishedPorts(service *swarmapi.Service) bool {
+	if service == nil {
+		return false
+	}
+	if service.Spec.EndpointSpec != nil && len(service.Spec.EndpointSpec.Ports) > 0 {
+		return true
+	}
+	return len(service.Endpoint.Ports) > 0
 }
 
 func (r *swarmPortResolver) managerNodeAddrs() []string {

@@ -49,6 +49,9 @@ func duplicateServiceIDs(services []*Service, preferredIDs map[string]struct{}) 
 		if len(group) < 2 {
 			continue
 		}
+		sort.Slice(group, func(i, j int) bool {
+			return group[i].ID < group[j].ID
+		})
 		keep := 0
 		for idx, svc := range group {
 			if _, ok := preferredIDs[svc.ID]; ok {
@@ -70,18 +73,23 @@ func duplicateServiceIDs(services []*Service, preferredIDs map[string]struct{}) 
 func serviceDuplicateSignature(service *Service) string {
 	tags := append([]string{}, service.Tags...)
 	sort.Strings(tags)
+	attrs := make([]string, 0, len(service.Attrs))
+	for key, value := range service.Attrs {
+		attrs = append(attrs, fmt.Sprintf("%s=%s", key, value))
+	}
+	sort.Strings(attrs)
 	signature := struct {
 		Name  string
 		Port  int
 		IP    string
 		Tags  []string
-		Attrs map[string]string
+		Attrs []string
 	}{
 		Name:  service.Name,
 		Port:  service.Port,
 		IP:    service.IP,
 		Tags:  tags,
-		Attrs: service.Attrs,
+		Attrs: attrs,
 	}
 	payload, err := json.Marshal(signature)
 	if err != nil {

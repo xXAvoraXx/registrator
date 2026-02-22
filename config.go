@@ -139,6 +139,44 @@ func applyEnvOverrides(cfg *AppConfig) {
 	if v := os.Getenv("REGISTRATOR_STATUS_ADDR"); v != "" {
 		cfg.Runtime.StatusAddr = v
 	}
+	if v := os.Getenv("REGISTRATOR_RUNTIME_HOST_IP"); v != "" {
+		cfg.Runtime.HostIP = v
+	}
+	if v := os.Getenv("REGISTRATOR_RUNTIME_INTERNAL"); v != "" {
+		cfg.Runtime.Internal = strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("REGISTRATOR_RUNTIME_EXPLICIT"); v != "" {
+		cfg.Runtime.Explicit = strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("REGISTRATOR_RUNTIME_FORCE_TAGS"); v != "" {
+		cfg.Runtime.ForceTags = v
+	}
+	if v := os.Getenv("REGISTRATOR_RUNTIME_REFRESH_TTL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Runtime.RefreshTTL = n
+		}
+	}
+	if v := os.Getenv("REGISTRATOR_RUNTIME_REFRESH_INTERVAL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Runtime.RefreshInterval = n
+		}
+	}
+	if v := os.Getenv("REGISTRATOR_RUNTIME_DEREGISTER_CHECK"); v != "" {
+		cfg.Runtime.DeregisterCheck = v
+	}
+	if v := os.Getenv("REGISTRATOR_RUNTIME_CLEANUP"); v != "" {
+		cfg.Runtime.Cleanup = strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("REGISTRATOR_RUNTIME_RETRY_ATTEMPTS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Runtime.RetryAttempts = n
+		}
+	}
+	if v := os.Getenv("REGISTRATOR_RUNTIME_RETRY_INTERVAL_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Runtime.RetryIntervalMs = n
+		}
+	}
 	if v := os.Getenv("REGISTRATOR_RUNTIME_RESYNC_INTERVAL"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.Runtime.ResyncInterval = n

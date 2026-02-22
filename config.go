@@ -13,6 +13,11 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+const (
+	flagRegistratorDiscoveryMode = "REGISTRATOR_DISCOVERY_MODE"
+	flagServiceDiscoveryMode     = "SERVICE_DISCOVERY_MODE"
+)
+
 type AppConfig struct {
 	Discovery struct {
 		Provider         string `json:"provider" yaml:"provider"`
@@ -104,23 +109,12 @@ func loadAppConfig() (AppConfig, error) {
 }
 
 func applyCLIOverrides(cfg *AppConfig, args []string) error {
-	discoveryModeFlagProvided := false
-	serviceDiscoveryModeFlagProvided := false
-	for _, arg := range args {
-		if arg == "-REGISTRATOR_DISCOVERY_MODE" || strings.HasPrefix(arg, "-REGISTRATOR_DISCOVERY_MODE=") {
-			discoveryModeFlagProvided = true
-		}
-		if arg == "-SERVICE_DISCOVERY_MODE" || strings.HasPrefix(arg, "-SERVICE_DISCOVERY_MODE=") {
-			serviceDiscoveryModeFlagProvided = true
-		}
-	}
-
 	fs := flag.NewFlagSet("registrator", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
 	discoveryProvider := fs.String("REGISTRATOR_DISCOVERY_PROVIDER", cfg.Discovery.Provider, "")
-	discoveryMode := fs.String("REGISTRATOR_DISCOVERY_MODE", cfg.Discovery.Mode, "")
-	serviceDiscoveryMode := fs.String("SERVICE_DISCOVERY_MODE", cfg.Discovery.Mode, "")
+	discoveryMode := fs.String(flagRegistratorDiscoveryMode, cfg.Discovery.Mode, "")
+	serviceDiscoveryMode := fs.String(flagServiceDiscoveryMode, cfg.Discovery.Mode, "")
 	discoveryAddress := fs.String("REGISTRATOR_DISCOVERY_ADDRESS", cfg.Discovery.Address, "")
 	discoveryPort := fs.Int("REGISTRATOR_DISCOVERY_PORT", cfg.Discovery.Port, "")
 	discoveryServiceName := fs.String("REGISTRATOR_DISCOVERY_SERVICE_NAME", cfg.Discovery.ServiceName, "")
@@ -146,6 +140,16 @@ func applyCLIOverrides(cfg *AppConfig, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	discoveryModeFlagProvided := false
+	serviceDiscoveryModeFlagProvided := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == flagRegistratorDiscoveryMode {
+			discoveryModeFlagProvided = true
+		}
+		if f.Name == flagServiceDiscoveryMode {
+			serviceDiscoveryModeFlagProvided = true
+		}
+	})
 
 	cfg.Discovery.Provider = *discoveryProvider
 	cfg.Discovery.Mode = *discoveryMode

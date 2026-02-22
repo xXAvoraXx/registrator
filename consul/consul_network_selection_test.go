@@ -5,6 +5,7 @@ import (
 
 	dockerapi "github.com/fsouza/go-dockerclient"
 	"github.com/stretchr/testify/assert"
+	consulapi "github.com/hashicorp/consul/api"
 )
 
 func TestSelectSharedNetworkIPReturnsSharedNetworkAddress(t *testing.T) {
@@ -47,4 +48,31 @@ func TestSelectSharedNetworkIPReturnsEmptyWhenNoSharedNetwork(t *testing.T) {
 
 	ip := selectSharedNetworkIP(containerNetworkNames(registrator), candidate)
 	assert.Equal(t, "", ip)
+}
+
+func TestResolveAddressFallsBackWhenDockerResolveFails(t *testing.T) {
+	originalRuntimeConfig := runtimeConfig
+	originalRuntimeDockerClient := runtimeDockerClient
+	defer func() {
+		runtimeConfig = originalRuntimeConfig
+		runtimeDockerClient = originalRuntimeDockerClient
+	}()
+
+	docker, err := dockerapi.NewClient("unix:///tmp/registrator-missing-docker.sock")
+	assert.NoError(t, err)
+
+	runtimeConfig = RuntimeConfig{
+		Mode:             "local",
+		Port:             8500,
+		UseDockerResolve: true,
+	}
+	runtimeDockerClient = docker
+
+	adapter := &ConsulAdapter{
+		baseConfig: &consulapi.Config{Address: "127.0.0.1:8500"},
+	}
+
+	address, err := adapter.resolveAddress(nil)
+	assert.NoError(t, err)
+	assert.Equal(t, "127.0.0.1:8500", address)
 }

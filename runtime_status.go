@@ -147,9 +147,10 @@ func startPeerDiscovery(runtime swarmRuntime, addr string) {
 func discoverPeers(peerHost, port, selfOverlayIP string) {
 	ips, err := net.LookupIP(peerHost)
 	if err != nil {
-		log.Printf("peer discovery DNS lookup failed for %s: %v", peerHost, err)
+		logPeerDiscoveryState("dns:"+peerHost, fmt.Sprintf("peer discovery DNS lookup failed for %s: %v", peerHost, err))
 		return
 	}
+	peerDiscoveryLogState.Delete("dns:" + peerHost)
 	client := &http.Client{Timeout: 2 * time.Second}
 	for _, ip := range ips {
 		peerIP := ip.String()
@@ -159,16 +160,27 @@ func discoverPeers(peerHost, port, selfOverlayIP string) {
 		url := "http://" + net.JoinHostPort(peerIP, port) + "/peerinfo"
 		info, err := fetchPeerInfo(client, url)
 		if err != nil {
+			logPeerDiscoveryState("peererr:"+peerIP, fmt.Sprintf("peer discovery fetch failed for %s: %v", peerIP, err))
 			continue
 		}
+		peerDiscoveryLogState.Delete("peererr:" + peerIP)
 		signature := fmt.Sprintf("%s|%s|%s|%s|%s", info.ServiceName, info.TaskID, info.NodeID, info.OverlayIP, info.Role)
-		prev, seen := peerDiscoveryLogState.Load(peerIP)
+		key := "peerok:" + peerIP
+		prev, seen := peerDiscoveryLogState.Load(key)
 		if seen && prev == signature {
 			continue
 		}
-		peerDiscoveryLogState.Store(peerIP, signature)
+		peerDiscoveryLogState.Store(key, signature)
 		log.Printf("discovered peer service=%s task=%s node=%s ip=%s role=%s", info.ServiceName, info.TaskID, info.NodeID, info.OverlayIP, info.Role)
 	}
+}
+
+func logPeerDiscoveryState(key, message string) {
+	if prev, seen := peerDiscoveryLogState.Load(key); seen && prev == message {
+		return
+	}
+	peerDiscoveryLogState.Store(key, message)
+	log.Print(message)
 }
 
 func fetchPeerInfo(client *http.Client, url string) (peerInfo, error) {

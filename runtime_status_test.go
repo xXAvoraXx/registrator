@@ -2,8 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"sync"
+	"sync/atomic"
 	"strings"
 	"testing"
 
@@ -65,5 +69,44 @@ func TestFetchPeerInfoParsesResponse(t *testing.T) {
 	}
 	if info.ServiceName != "registrator" || info.TaskID != "task-1" || info.Role != "worker" {
 		t.Fatalf("unexpected peer info payload: %+v", info)
+	}
+}
+
+func TestDiscoverPeersCallsCallbackOncePerPeerSignature(t *testing.T) {
+	peerDiscoveryLogState = sync.Map{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(peerInfo{
+			ServiceID:   "svc-1",
+			ServiceName: "registrator",
+			TaskID:      "task-1",
+			NodeID:      "node-1",
+			Hostname:    "host-1",
+			OverlayIP:   "10.0.1.172",
+			Role:        "manager",
+		})
+	}))
+	defer server.Close()
+
+	u, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("failed to parse server URL: %v", err)
+	}
+	host, port, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		t.Fatalf("failed to parse host and port: %v", err)
+	}
+
+	var callbackCalls int32
+	onPeerDiscovered := func(info peerInfo) {
+		if info.Role == "manager" {
+			atomic.AddInt32(&callbackCalls, 1)
+		}
+	}
+
+	discoverPeers(host, port, "", onPeerDiscovered)
+	discoverPeers(host, port, "", onPeerDiscovered)
+
+	if got := atomic.LoadInt32(&callbackCalls); got != 1 {
+		t.Fatalf("expected callback to run once for identical manager signature, got %d", got)
 	}
 }

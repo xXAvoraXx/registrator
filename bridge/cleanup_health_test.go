@@ -7,8 +7,8 @@ import (
 )
 
 func TestCleanupUnhealthyReason(t *testing.T) {
-	if got := cleanupUnhealthyReason(nil); got == "" {
-		t.Fatalf("expected reason for nil container")
+	if got := cleanupUnhealthyReason(nil); got != "container state unavailable" {
+		t.Fatalf("expected unavailable state reason, got %q", got)
 	}
 	if got := cleanupUnhealthyReason(&dockerapi.Container{
 		State: dockerapi.State{Running: false},

@@ -984,7 +984,7 @@ func cleanupUnhealthyReason(container *dockerapi.Container) string {
 	if !container.State.Running {
 		return "container not running"
 	}
-	if strings.EqualFold(container.State.Health.Status, "unhealthy") {
+	if status := container.State.Health.Status; status == "unhealthy" {
 		return "container health is unhealthy"
 	}
 	return ""

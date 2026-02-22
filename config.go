@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -106,9 +105,13 @@ func loadAppConfig() (AppConfig, error) {
 
 func applyCLIOverrides(cfg *AppConfig, args []string) error {
 	filteredArgs := make([]string, 0, len(args))
+	serviceDiscoveryModeFlagProvided := false
 	for _, arg := range args {
 		if arg == "/bin/registrator" || arg == "registrator" {
 			continue
+		}
+		if arg == "-SERVICE_DISCOVERY_MODE" || strings.HasPrefix(arg, "-SERVICE_DISCOVERY_MODE=") {
+			serviceDiscoveryModeFlagProvided = true
 		}
 		filteredArgs = append(filteredArgs, arg)
 	}
@@ -116,66 +119,66 @@ func applyCLIOverrides(cfg *AppConfig, args []string) error {
 	fs := flag.NewFlagSet("registrator", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
-	internal := fs.Bool("internal", cfg.Runtime.Internal, "")
-	ip := fs.String("ip", cfg.Runtime.HostIP, "")
-	resync := fs.Int("resync", cfg.Runtime.ResyncInterval, "")
-	retryAttempts := fs.Int("retry-attempts", cfg.Runtime.RetryAttempts, "")
-	retryInterval := fs.Int("retry-interval", cfg.Runtime.RetryIntervalMs, "")
-	tags := fs.String("tags", cfg.Runtime.ForceTags, "")
-	ttl := fs.Int("ttl", cfg.Runtime.RefreshTTL, "")
-	ttlRefresh := fs.Int("ttl-refresh", cfg.Runtime.RefreshInterval, "")
-	deregister := fs.String("deregister", cfg.Runtime.DeregisterCheck, "")
-	cleanup := fs.Bool("cleanup", cfg.Runtime.Cleanup, "")
-	useIPFromLabel := fs.String("useIpFromLabel", cfg.Runtime.UseIPFromLabel, "")
+	discoveryProvider := fs.String("REGISTRATOR_DISCOVERY_PROVIDER", cfg.Discovery.Provider, "")
+	discoveryMode := fs.String("REGISTRATOR_DISCOVERY_MODE", cfg.Discovery.Mode, "")
+	serviceDiscoveryMode := fs.String("SERVICE_DISCOVERY_MODE", cfg.Discovery.Mode, "")
+	discoveryAddress := fs.String("REGISTRATOR_DISCOVERY_ADDRESS", cfg.Discovery.Address, "")
+	discoveryPort := fs.Int("REGISTRATOR_DISCOVERY_PORT", cfg.Discovery.Port, "")
+	discoveryServiceName := fs.String("REGISTRATOR_DISCOVERY_SERVICE_NAME", cfg.Discovery.ServiceName, "")
+	discoveryUseDockerResolve := fs.Bool("REGISTRATOR_DISCOVERY_USE_DOCKER_RESOLVE", cfg.Discovery.UseDockerResolve, "")
+	serviceNameSource := fs.String("REGISTRATOR_SERVICE_NAME_SOURCE", cfg.Service.NameSource, "")
+	serviceLabelKey := fs.String("REGISTRATOR_SERVICE_LABEL_KEY", cfg.Service.LabelKey, "")
+	serviceIDFormat := fs.String("REGISTRATOR_SERVICE_ID_FORMAT", cfg.Service.IDFormat, "")
+	dockerEndpoint := fs.String("REGISTRATOR_DOCKER_ENDPOINT", cfg.Docker.Endpoint, "")
+	dockerSwarmMode := fs.Bool("REGISTRATOR_DOCKER_SWARM_MODE", cfg.Docker.SwarmMode, "")
+	statusAddr := fs.String("REGISTRATOR_STATUS_ADDR", cfg.Runtime.StatusAddr, "")
+	runtimeHostIP := fs.String("REGISTRATOR_RUNTIME_HOST_IP", cfg.Runtime.HostIP, "")
+	runtimeInternal := fs.Bool("REGISTRATOR_RUNTIME_INTERNAL", cfg.Runtime.Internal, "")
+	runtimeExplicit := fs.Bool("REGISTRATOR_RUNTIME_EXPLICIT", cfg.Runtime.Explicit, "")
+	runtimeForceTags := fs.String("REGISTRATOR_RUNTIME_FORCE_TAGS", cfg.Runtime.ForceTags, "")
+	runtimeRefreshTTL := fs.Int("REGISTRATOR_RUNTIME_REFRESH_TTL", cfg.Runtime.RefreshTTL, "")
+	runtimeRefreshInterval := fs.Int("REGISTRATOR_RUNTIME_REFRESH_INTERVAL", cfg.Runtime.RefreshInterval, "")
+	runtimeDeregisterCheck := fs.String("REGISTRATOR_RUNTIME_DEREGISTER_CHECK", cfg.Runtime.DeregisterCheck, "")
+	runtimeCleanup := fs.Bool("REGISTRATOR_RUNTIME_CLEANUP", cfg.Runtime.Cleanup, "")
+	runtimeRetryAttempts := fs.Int("REGISTRATOR_RUNTIME_RETRY_ATTEMPTS", cfg.Runtime.RetryAttempts, "")
+	runtimeRetryIntervalMs := fs.Int("REGISTRATOR_RUNTIME_RETRY_INTERVAL_MS", cfg.Runtime.RetryIntervalMs, "")
+	runtimeResyncInterval := fs.Int("REGISTRATOR_RUNTIME_RESYNC_INTERVAL", cfg.Runtime.ResyncInterval, "")
 
 	if err := fs.Parse(filteredArgs); err != nil {
 		return err
 	}
 
-	cfg.Runtime.Internal = *internal
-	cfg.Runtime.HostIP = *ip
-	cfg.Runtime.ResyncInterval = *resync
-	cfg.Runtime.RetryAttempts = *retryAttempts
-	cfg.Runtime.RetryIntervalMs = *retryInterval
-	cfg.Runtime.ForceTags = *tags
-	cfg.Runtime.RefreshTTL = *ttl
-	cfg.Runtime.RefreshInterval = *ttlRefresh
-	cfg.Runtime.DeregisterCheck = *deregister
-	cfg.Runtime.Cleanup = *cleanup
-	cfg.Runtime.UseIPFromLabel = *useIPFromLabel
+	cfg.Discovery.Provider = *discoveryProvider
+	cfg.Discovery.Mode = *discoveryMode
+	cfg.Discovery.Address = *discoveryAddress
+	cfg.Discovery.Port = *discoveryPort
+	cfg.Discovery.ServiceName = *discoveryServiceName
+	cfg.Discovery.UseDockerResolve = *discoveryUseDockerResolve
+	if serviceDiscoveryModeFlagProvided {
+		cfg.Discovery.Mode = *serviceDiscoveryMode
+	}
+	cfg.Service.NameSource = *serviceNameSource
+	cfg.Service.LabelKey = *serviceLabelKey
+	cfg.Service.IDFormat = *serviceIDFormat
+	cfg.Docker.Endpoint = *dockerEndpoint
+	cfg.Docker.SwarmMode = *dockerSwarmMode
+	cfg.Runtime.StatusAddr = *statusAddr
+	cfg.Runtime.HostIP = *runtimeHostIP
+	cfg.Runtime.Internal = *runtimeInternal
+	cfg.Runtime.Explicit = *runtimeExplicit
+	cfg.Runtime.ForceTags = *runtimeForceTags
+	cfg.Runtime.RefreshTTL = *runtimeRefreshTTL
+	cfg.Runtime.RefreshInterval = *runtimeRefreshInterval
+	cfg.Runtime.DeregisterCheck = *runtimeDeregisterCheck
+	cfg.Runtime.Cleanup = *runtimeCleanup
+	cfg.Runtime.RetryAttempts = *runtimeRetryAttempts
+	cfg.Runtime.RetryIntervalMs = *runtimeRetryIntervalMs
+	cfg.Runtime.ResyncInterval = *runtimeResyncInterval
 
-	for _, arg := range fs.Args() {
-		if strings.Contains(arg, "://") {
-			if err := applyRegistryURIOverride(cfg, arg); err != nil {
-				return err
-			}
-			continue
-		}
-		return fmt.Errorf("unexpected argument: %s", arg)
+	if extra := fs.Args(); len(extra) > 0 {
+		return fmt.Errorf("unexpected argument: %s", extra[0])
 	}
 
-	return nil
-}
-
-func applyRegistryURIOverride(cfg *AppConfig, registryURI string) error {
-	parsed, err := url.Parse(registryURI)
-	if err != nil {
-		return err
-	}
-	if parsed.Scheme == "" {
-		return fmt.Errorf("invalid registry uri: %s", registryURI)
-	}
-	cfg.Discovery.Provider = parsed.Scheme
-	if host := parsed.Hostname(); host != "" {
-		cfg.Discovery.Address = host
-	}
-	if port := parsed.Port(); port != "" {
-		p, err := strconv.Atoi(port)
-		if err != nil {
-			return err
-		}
-		cfg.Discovery.Port = p
-	}
 	return nil
 }
 

@@ -62,27 +62,35 @@ func TestRuntimeEnvOverrides(t *testing.T) {
 func TestCLIOverridesEnvAndConfig(t *testing.T) {
 	t.Setenv("REGISTRATOR_RUNTIME_INTERNAL", "false")
 	t.Setenv("REGISTRATOR_RUNTIME_RETRY_ATTEMPTS", "10")
-	t.Setenv("REGISTRATOR_DISCOVERY_PROVIDER", "consul")
-	t.Setenv("REGISTRATOR_DISCOVERY_ADDRESS", "127.0.0.1")
-	t.Setenv("REGISTRATOR_DISCOVERY_PORT", "8500")
+	t.Setenv("REGISTRATOR_DISCOVERY_MODE", "local")
 
 	cfg := defaultAppConfig()
 	applyEnvOverrides(&cfg)
 
-	err := applyCLIOverrides(&cfg, []string{"-internal", "-retry-attempts=2", "etcd://10.0.0.9:2379"})
+	err := applyCLIOverrides(&cfg, []string{"-REGISTRATOR_RUNTIME_INTERNAL=true", "-REGISTRATOR_RUNTIME_RETRY_ATTEMPTS=2", "-REGISTRATOR_DISCOVERY_MODE=service"})
 	testassert.NoError(t, err)
 	testassert.True(t, cfg.Runtime.Internal)
 	testassert.Equal(t, 2, cfg.Runtime.RetryAttempts)
-	testassert.Equal(t, "etcd", cfg.Discovery.Provider)
-	testassert.Equal(t, "10.0.0.9", cfg.Discovery.Address)
-	testassert.Equal(t, 2379, cfg.Discovery.Port)
+	testassert.Equal(t, "service", cfg.Discovery.Mode)
 }
 
 func TestCLIOverridesIgnoreEntrypointArgument(t *testing.T) {
 	cfg := defaultAppConfig()
-	err := applyCLIOverrides(&cfg, []string{"/bin/registrator", "consul://consul:8500"})
+	err := applyCLIOverrides(&cfg, []string{"/bin/registrator", "-REGISTRATOR_DISCOVERY_ADDRESS=consul"})
 	testassert.NoError(t, err)
-	testassert.Equal(t, "consul", cfg.Discovery.Provider)
 	testassert.Equal(t, "consul", cfg.Discovery.Address)
-	testassert.Equal(t, 8500, cfg.Discovery.Port)
+}
+
+func TestCLIOverridesSupportServiceDiscoveryModeAlias(t *testing.T) {
+	cfg := defaultAppConfig()
+	cfg.Discovery.Mode = "local"
+	err := applyCLIOverrides(&cfg, []string{"-SERVICE_DISCOVERY_MODE=service"})
+	testassert.NoError(t, err)
+	testassert.Equal(t, "service", cfg.Discovery.Mode)
+}
+
+func TestCLIOverridesRejectLegacyPositionalURI(t *testing.T) {
+	cfg := defaultAppConfig()
+	err := applyCLIOverrides(&cfg, []string{"consul://consul:8500"})
+	testassert.Error(t, err)
 }

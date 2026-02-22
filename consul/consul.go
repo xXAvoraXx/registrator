@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -358,7 +359,15 @@ func selectSharedNetworkIP(registratorNetworks map[string]struct{}, candidate *d
 	if candidate == nil || candidate.NetworkSettings == nil {
 		return ""
 	}
-	for networkName, network := range candidate.NetworkSettings.Networks {
+	sharedNames := make([]string, 0)
+	for networkName := range candidate.NetworkSettings.Networks {
+		if _, shared := registratorNetworks[networkName]; shared {
+			sharedNames = append(sharedNames, networkName)
+		}
+	}
+	sort.Strings(sharedNames)
+	for _, networkName := range sharedNames {
+		network := candidate.NetworkSettings.Networks[networkName]
 		if _, shared := registratorNetworks[networkName]; shared && network.IPAddress != "" {
 			return network.IPAddress
 		}

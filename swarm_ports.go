@@ -83,6 +83,9 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 		return r.docker.InspectService(serviceID)
 	}
 	managers := r.managerNodeAddrs()
+	if len(managers) == 0 {
+		return nil, fmt.Errorf("unable to inspect service %s from manager list: no manager node address discovered (check swarm manager availability and Docker API access)", serviceID)
+	}
 	var service *swarmapi.Service
 	op := func() error {
 		for _, addr := range managers {
@@ -95,7 +98,7 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 				return nil
 			}
 		}
-		return fmt.Errorf("unable to inspect service %s from manager list", serviceID)
+		return fmt.Errorf("unable to inspect service %s from manager list (worker needs manager Docker API reachability on port %d)", serviceID, r.managerAPIPort)
 	}
 	exp := backoff.NewExponentialBackOff()
 	exp.MaxElapsedTime = managerRetryTimeout

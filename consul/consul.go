@@ -253,7 +253,11 @@ func (r *ConsulAdapter) resolveAddress(service *bridge.Service) (string, error) 
 		}
 		resolved, err := resolveLocalAgentAddress(runtimeDockerClient, service)
 		if err != nil {
-			return "", err
+			if r.baseConfig.Address == "" {
+				return "", err
+			}
+			log.Printf("consul: local docker resolve failed, falling back to configured address %q: %v", r.baseConfig.Address, err)
+			return r.baseConfig.Address, nil
 		}
 		return fmt.Sprintf("%s:%d", resolved, runtimeConfig.Port), nil
 	default:

@@ -331,7 +331,7 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 			for k, v := range service.Spec.Labels {
 				runtimeLabels[k] = v
 			}
-		} else {
+		} else if !isSwarmManagerOnlyError(err) {
 			log.Println("unable to inspect swarm service labels for container", container.ID[:12], "service", serviceID, "error", err)
 		}
 	}
@@ -840,6 +840,10 @@ func applyRuntimeOverrides(metadata map[string]string, labels map[string]string)
 		}
 	}
 	return out
+}
+
+func isSwarmManagerOnlyError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "This node is not a swarm manager")
 }
 
 func (b *Bridge) resolveServiceName(metadata map[string]string, container *dockerapi.Container, defaultName string) string {

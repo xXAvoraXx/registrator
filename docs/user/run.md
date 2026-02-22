@@ -15,7 +15,7 @@ and then requires a Registry URI. Here is a typical way to run Registrator:
     $ docker run -d \
         --name=registrator \
         --net=host \
-        --volume=/var/run/docker.sock:/tmp/docker.sock \
+        --volume=/var/run/docker.sock:/var/run/docker.sock \
         gliderlabs/registrator:latest \
           consul://localhost:8500
 
@@ -23,7 +23,7 @@ and then requires a Registry URI. Here is a typical way to run Registrator:
 
 Option                                           | Required    | Description
 ------                                           | --------    | -----------
-`--volume=/var/run/docker.sock:/tmp/docker.sock` | yes         | Allows Registrator to access Docker API
+`--volume=/var/run/docker.sock:/var/run/docker.sock` | yes         | Allows Registrator to access Docker API
 `--net=host`                                     | recommended | Helps Registrator get host-level IP and hostname
 
 An alternative to host network mode would be to set the container hostname to the host
@@ -76,7 +76,7 @@ The ACL token is passed in through docker in an environment variable called `CON
     $ docker run -d \
         --name=registrator \
         --net=host \
-        --volume=/var/run/docker.sock:/tmp/docker.sock \
+        --volume=/var/run/docker.sock:/var/run/docker.sock \
         -e CONSUL_HTTP_TOKEN=<your acl token> \
         gliderlabs/registrator:latest \
           consul://localhost:8500

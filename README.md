@@ -93,7 +93,7 @@ service:
   labelKey: service.name          # default: service.name
   idFormat: "{hostname}:{name}:{port}" # default: {hostname}:{name}:{port}
 docker:
-  endpoint: unix:///tmp/docker.sock # default: unix:///tmp/docker.sock
+  endpoint: unix:///var/run/docker.sock # default: unix:///var/run/docker.sock
   swarmMode: true                 # default: true
 runtime:
   hostIP: ""                      # default: empty
@@ -134,7 +134,7 @@ Run with Docker (bind-mount config file):
 ```bash
 docker run -d \
   --name registrator \
-  -v /var/run/docker.sock:/tmp/docker.sock \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   -v /etc/registrator/config.yaml:/etc/registrator/config.yaml:ro \
   -e REGISTRATOR_CONFIG=/etc/registrator/config.yaml \
   ghcr.io/xxavoraxx/registrator:latest
@@ -156,7 +156,7 @@ Supported environment variables:
 | `REGISTRATOR_SERVICE_NAME_SOURCE` | `service.name` | Service name source (label/metadata key). |
 | `REGISTRATOR_SERVICE_LABEL_KEY` | `service.name` | Default label key used to read service name. |
 | `REGISTRATOR_SERVICE_ID_FORMAT` | `{hostname}:{name}:{port}` | Format string for generated service IDs. |
-| `REGISTRATOR_DOCKER_ENDPOINT` | `unix:///tmp/docker.sock` | Docker API endpoint. |
+| `REGISTRATOR_DOCKER_ENDPOINT` | `unix:///var/run/docker.sock` | Docker API endpoint. |
 | `REGISTRATOR_DOCKER_SWARM_MODE` | `true` | Enables/disables Swarm-aware behavior. |
 | `REGISTRATOR_STATUS_ADDR` | `:8080` | Listen address for health/readiness/metrics endpoints. |
 | `REGISTRATOR_RUNTIME_HOST_IP` | _(empty)_ | Runtime host IP override. |
@@ -170,6 +170,7 @@ Supported environment variables:
 | `REGISTRATOR_RUNTIME_RETRY_ATTEMPTS` | `10` | Retry attempts for register/deregister (`-1` means infinite). |
 | `REGISTRATOR_RUNTIME_RETRY_INTERVAL_MS` | `2000` | Delay between retries in milliseconds. |
 | `REGISTRATOR_RUNTIME_RESYNC_INTERVAL` | `30` | Periodic resync interval in seconds. |
+| `REGISTRATOR_RUNTIME_MANAGER_API_PORT` | `2375` | Docker API port that workers use to query manager nodes for Swarm service port metadata. |
 | `CONSUL_HTTP_TOKEN` | _(empty)_ | Consul ACL token (consumed by Consul client from env). |
 | `CONSUL_CACERT` | _(empty)_ | CA certificate file path used in `consul-tls` mode. |
 | `CONSUL_CLIENT_CERT` | _(empty)_ | Client certificate file path used in `consul-tls` mode. |
@@ -180,7 +181,7 @@ Supported environment variables:
 ### Prerequisites
 
 - Docker Engine (Swarm optional)
-- Access to Docker socket from registrator container (`/var/run/docker.sock` -> `/tmp/docker.sock`)
+- Access to Docker socket from registrator container (`/var/run/docker.sock` -> `/var/run/docker.sock`)
 - A discovery backend (default examples use Consul)
 
 ### Option 1: Build and run binary locally
@@ -199,7 +200,7 @@ discovery:
   port: 8500
   serviceName: consul
 docker:
-  endpoint: unix:///tmp/docker.sock
+  endpoint: unix:///var/run/docker.sock
 logging:
   level: info
 YAML
@@ -212,7 +213,7 @@ REGISTRATOR_CONFIG=/etc/registrator/config.yaml ./registrator
 ```bash
 docker run -d \
   --name registrator \
-  -v /var/run/docker.sock:/tmp/docker.sock \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   -e REGISTRATOR_DISCOVERY_PROVIDER=consul \
   -e REGISTRATOR_DISCOVERY_MODE=local \
   -e REGISTRATOR_DISCOVERY_PORT=8500 \
@@ -232,7 +233,7 @@ Use the **Docker Swarm (global mode)** example below; it is the recommended prod
 docker run -d \
   --name registrator \
   --net=host \
-  -v /var/run/docker.sock:/tmp/docker.sock \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   -e REGISTRATOR_STATUS_ADDR=:8080 \
   -e REGISTRATOR_DISCOVERY_MODE=local \
   ghcr.io/xxavoraxx/registrator:latest
@@ -244,7 +245,7 @@ docker run -d \
 docker service create \
   --name registrator \
   --mode global \
-  --mount type=bind,src=/var/run/docker.sock,dst=/tmp/docker.sock \
+  --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
   --network host \
   --env REGISTRATOR_STATUS_ADDR=:8080 \
   --env REGISTRATOR_DISCOVERY_MODE=service \
@@ -261,6 +262,12 @@ In `Discovery.Mode=local`, Registrator resolves the local Consul agent via Docke
 
 For Swarm service containers, Registrator resolves service ports from Swarm service endpoint metadata.  
 On worker nodes, it can query manager nodes in sorted order (with backoff retries) for authoritative service `EndpointSpec.Ports`, reducing dependence on local worker-only container networking details.
+This communication path is worker -> Docker manager API (`runtime.managerAPIPort`), not registrator-to-registrator peer RPC.
+
+Troubleshooting:
+
+- If workers cannot resolve swarm service ports, verify manager Docker API reachability on `runtime.managerAPIPort` (default `2375`).
+- Publishing `2375` as an ingress port on the registrator service is not what this lookup uses; workers connect directly to manager node addresses from `docker node ls` metadata.
 
 ## Failure handling model
 
@@ -281,7 +288,7 @@ See the **Configuration model** section for currently supported `REGISTRATOR_*` 
 
 ## Production best practices
 
-1. Run in Swarm global mode and mount `/var/run/docker.sock` to `/tmp/docker.sock`.
+1. Run in Swarm global mode and mount `/var/run/docker.sock` to `/var/run/docker.sock`.
 2. Enable periodic reconciliation (`-resync`) to heal eventual drift.
 3. Scrape `/metrics` and alert on event/reconcile anomalies.
 4. Gate traffic rollouts on `/readyz`.

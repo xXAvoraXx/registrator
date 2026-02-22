@@ -44,7 +44,7 @@ which encodes what type of registry, how to connect to it, and any options.
 $ docker run -d \
     --name=registrator \
     --net=host \
-    --volume=/var/run/docker.sock:/tmp/docker.sock \
+    --volume=/var/run/docker.sock:/var/run/docker.sock \
     gliderlabs/registrator:latest \
       consul://localhost:8500
 ```

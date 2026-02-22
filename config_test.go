@@ -28,6 +28,7 @@ func TestLoadConfigWithoutFileUsesDefaults(t *testing.T) {
 	cfg, err := loadAppConfig()
 	testassert.NoError(t, err)
 	testassert.Equal(t, "consul", cfg.Discovery.Provider)
+	testassert.Equal(t, "unix:///var/run/docker.sock", cfg.Docker.Endpoint)
 }
 
 func TestRuntimeEnvOverrides(t *testing.T) {
@@ -42,6 +43,7 @@ func TestRuntimeEnvOverrides(t *testing.T) {
 	t.Setenv("REGISTRATOR_RUNTIME_RETRY_ATTEMPTS", "-1")
 	t.Setenv("REGISTRATOR_RUNTIME_RETRY_INTERVAL_MS", "500")
 	t.Setenv("REGISTRATOR_RUNTIME_RESYNC_INTERVAL", "60")
+	t.Setenv("REGISTRATOR_RUNTIME_MANAGER_API_PORT", "12345")
 
 	cfg := defaultAppConfig()
 	applyEnvOverrides(&cfg)
@@ -57,6 +59,7 @@ func TestRuntimeEnvOverrides(t *testing.T) {
 	testassert.Equal(t, -1, cfg.Runtime.RetryAttempts)
 	testassert.Equal(t, 500, cfg.Runtime.RetryIntervalMs)
 	testassert.Equal(t, 60, cfg.Runtime.ResyncInterval)
+	testassert.Equal(t, 12345, cfg.Runtime.ManagerAPIPort)
 }
 
 func TestCLIOverridesEnvAndConfig(t *testing.T) {
@@ -67,11 +70,12 @@ func TestCLIOverridesEnvAndConfig(t *testing.T) {
 	cfg := defaultAppConfig()
 	applyEnvOverrides(&cfg)
 
-	err := applyCLIOverrides(&cfg, []string{"-REGISTRATOR_RUNTIME_INTERNAL=true", "-REGISTRATOR_RUNTIME_RETRY_ATTEMPTS=2", "-REGISTRATOR_DISCOVERY_MODE=service"})
+	err := applyCLIOverrides(&cfg, []string{"-REGISTRATOR_RUNTIME_INTERNAL=true", "-REGISTRATOR_RUNTIME_RETRY_ATTEMPTS=2", "-REGISTRATOR_DISCOVERY_MODE=service", "-REGISTRATOR_RUNTIME_MANAGER_API_PORT=22345"})
 	testassert.NoError(t, err)
 	testassert.True(t, cfg.Runtime.Internal)
 	testassert.Equal(t, 2, cfg.Runtime.RetryAttempts)
 	testassert.Equal(t, "service", cfg.Discovery.Mode)
+	testassert.Equal(t, 22345, cfg.Runtime.ManagerAPIPort)
 }
 
 func TestCLIOverridesRejectEntrypointArgument(t *testing.T) {

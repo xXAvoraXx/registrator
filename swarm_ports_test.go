@@ -85,7 +85,7 @@ func TestInspectServiceWorkerLocalFirstThenManagerFallback(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "/version"):
-			_, _ = w.Write([]byte(`{"ApiVersion":"1.41"}`))
+			_ = json.NewEncoder(w).Encode(map[string]string{"ApiVersion": "1.41"})
 		case strings.Contains(r.URL.Path, "/services/service-id"):
 			call := atomic.AddInt32(&serviceCalls, 1)
 			service := swarmapi.Service{
@@ -137,5 +137,27 @@ func TestInspectServiceWorkerLocalFirstThenManagerFallback(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&serviceCalls); got != 2 {
 		t.Fatalf("expected local inspect then manager inspect (2 calls), got %d", got)
+	}
+}
+
+func TestServiceHasPublishedPorts(t *testing.T) {
+	if serviceHasPublishedPorts(nil) {
+		t.Fatalf("expected nil service to return false")
+	}
+	if !serviceHasPublishedPorts(&swarmapi.Service{
+		Spec: swarmapi.ServiceSpec{
+			EndpointSpec: &swarmapi.EndpointSpec{
+				Ports: []swarmapi.PortConfig{{PublishedPort: 80, TargetPort: 8080}},
+			},
+		},
+	}) {
+		t.Fatalf("expected ports in Spec.EndpointSpec to return true")
+	}
+	if !serviceHasPublishedPorts(&swarmapi.Service{
+		Endpoint: swarmapi.Endpoint{
+			Ports: []swarmapi.PortConfig{{PublishedPort: 443, TargetPort: 8443}},
+		},
+	}) {
+		t.Fatalf("expected ports in Endpoint to return true")
 	}
 }

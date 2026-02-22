@@ -113,7 +113,10 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 	}
 	managers := r.managerNodeAddrs()
 	if len(managers) == 0 {
-		return nil, fmt.Errorf("unable to inspect service %s from manager list: no manager node address discovered (check swarm manager availability and Docker API access)", serviceID)
+		if err != nil {
+			return nil, fmt.Errorf("unable to inspect service %s locally (%v) and from manager list: no manager node address discovered (check swarm manager availability and Docker API access)", serviceID, err)
+		}
+		return nil, fmt.Errorf("unable to inspect service %s: local inspection returned no published ports and no manager node address discovered (check swarm manager availability and Docker API access)", serviceID)
 	}
 	op := func() error {
 		for _, addr := range managers {
@@ -130,8 +133,8 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 	}
 	exp := backoff.NewExponentialBackOff()
 	exp.MaxElapsedTime = managerRetryTimeout
-	err = backoff.Retry(op, exp)
-	return service, err
+	retryErr := backoff.Retry(op, exp)
+	return service, retryErr
 }
 
 func serviceHasPublishedPorts(service *swarmapi.Service) bool {

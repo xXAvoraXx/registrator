@@ -105,10 +105,14 @@ func loadAppConfig() (AppConfig, error) {
 
 func applyCLIOverrides(cfg *AppConfig, args []string) error {
 	filteredArgs := make([]string, 0, len(args))
+	discoveryModeFlagProvided := false
 	serviceDiscoveryModeFlagProvided := false
 	for _, arg := range args {
 		if arg == "/bin/registrator" || arg == "registrator" {
 			continue
+		}
+		if arg == "-REGISTRATOR_DISCOVERY_MODE" || strings.HasPrefix(arg, "-REGISTRATOR_DISCOVERY_MODE=") {
+			discoveryModeFlagProvided = true
 		}
 		if arg == "-SERVICE_DISCOVERY_MODE" || strings.HasPrefix(arg, "-SERVICE_DISCOVERY_MODE=") {
 			serviceDiscoveryModeFlagProvided = true
@@ -154,7 +158,7 @@ func applyCLIOverrides(cfg *AppConfig, args []string) error {
 	cfg.Discovery.Port = *discoveryPort
 	cfg.Discovery.ServiceName = *discoveryServiceName
 	cfg.Discovery.UseDockerResolve = *discoveryUseDockerResolve
-	if serviceDiscoveryModeFlagProvided {
+	if !discoveryModeFlagProvided && serviceDiscoveryModeFlagProvided {
 		cfg.Discovery.Mode = *serviceDiscoveryMode
 	}
 	cfg.Service.NameSource = *serviceNameSource

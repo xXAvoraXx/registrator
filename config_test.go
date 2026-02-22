@@ -89,6 +89,13 @@ func TestCLIOverridesSupportServiceDiscoveryModeAlias(t *testing.T) {
 	testassert.Equal(t, "service", cfg.Discovery.Mode)
 }
 
+func TestCLIOverridesPreferRegistratorDiscoveryModeOverAlias(t *testing.T) {
+	cfg := defaultAppConfig()
+	err := applyCLIOverrides(&cfg, []string{"-REGISTRATOR_DISCOVERY_MODE=local", "-SERVICE_DISCOVERY_MODE=service"})
+	testassert.NoError(t, err)
+	testassert.Equal(t, "local", cfg.Discovery.Mode)
+}
+
 func TestCLIOverridesRejectLegacyPositionalURI(t *testing.T) {
 	cfg := defaultAppConfig()
 	err := applyCLIOverrides(&cfg, []string{"consul://consul:8500"})

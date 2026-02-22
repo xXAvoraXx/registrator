@@ -78,42 +78,36 @@ Configuration priority:
 
 Supported environment variables:
 
-```
-REGISTRATOR_CONFIG=/etc/registrator/config.yaml
-
-REGISTRATOR_DISCOVERY_PROVIDER=consul
-REGISTRATOR_DISCOVERY_MODE=local
-REGISTRATOR_DISCOVERY_ADDRESS=
-REGISTRATOR_DISCOVERY_PORT=8500
-REGISTRATOR_DISCOVERY_SERVICE_NAME=consul
-REGISTRATOR_DISCOVERY_USE_DOCKER_RESOLVE=true
-
-REGISTRATOR_SERVICE_NAME_SOURCE=service.name
-REGISTRATOR_SERVICE_LABEL_KEY=service.name
-REGISTRATOR_SERVICE_ID_FORMAT={hostname}:{name}:{port}
-
-REGISTRATOR_DOCKER_ENDPOINT=unix:///tmp/docker.sock
-REGISTRATOR_DOCKER_SWARM_MODE=true
-REGISTRATOR_STATUS_ADDR=:8080
-
-REGISTRATOR_RUNTIME_HOST_IP=
-REGISTRATOR_RUNTIME_INTERNAL=false
-REGISTRATOR_RUNTIME_EXPLICIT=false
-REGISTRATOR_RUNTIME_FORCE_TAGS=
-REGISTRATOR_RUNTIME_REFRESH_TTL=0
-REGISTRATOR_RUNTIME_REFRESH_INTERVAL=0
-REGISTRATOR_RUNTIME_DEREGISTER_CHECK=always
-REGISTRATOR_RUNTIME_CLEANUP=true
-REGISTRATOR_RUNTIME_RETRY_ATTEMPTS=10
-REGISTRATOR_RUNTIME_RETRY_INTERVAL_MS=2000
-REGISTRATOR_RUNTIME_RESYNC_INTERVAL=30
-
-# Consul client/auth/TLS environment variables
-CONSUL_HTTP_TOKEN=
-CONSUL_CACERT=
-CONSUL_CLIENT_CERT=
-CONSUL_CLIENT_KEY=
-```
+| Environment Variable | Default | Description |
+|---|---|---|
+| `REGISTRATOR_CONFIG` | `/etc/registrator/config.yaml` | Config dosyası yolu. Dosya varsa okunur, env değerleri bunun üstüne yazar. |
+| `REGISTRATOR_DISCOVERY_PROVIDER` | `consul` | Discovery backend sağlayıcısı (örn. `consul`). |
+| `REGISTRATOR_DISCOVERY_MODE` | `local` | Discovery adres çözümleme modu (`local`, `service`, vb.). |
+| `REGISTRATOR_DISCOVERY_ADDRESS` | _(empty)_ | Discovery backend için doğrudan adres override değeri. |
+| `REGISTRATOR_DISCOVERY_PORT` | `8500` | Discovery backend portu. |
+| `REGISTRATOR_DISCOVERY_SERVICE_NAME` | `consul` | `service` modunda kullanılacak discovery servis adı. |
+| `REGISTRATOR_DISCOVERY_USE_DOCKER_RESOLVE` | `true` | `local` modunda adresi Docker üzerinden çözümlemeyi açar/kapatır. |
+| `REGISTRATOR_SERVICE_NAME_SOURCE` | `service.name` | Servis adı kaynağını belirler (label/metadata anahtarı). |
+| `REGISTRATOR_SERVICE_LABEL_KEY` | `service.name` | Servis adı için okunacak varsayılan label anahtarı. |
+| `REGISTRATOR_SERVICE_ID_FORMAT` | `{hostname}:{name}:{port}` | Üretilecek service ID formatı. |
+| `REGISTRATOR_DOCKER_ENDPOINT` | `unix:///tmp/docker.sock` | Docker API endpoint’i. |
+| `REGISTRATOR_DOCKER_SWARM_MODE` | `true` | Swarm farkındalığı/senaryosu için davranışı açar-kapatır. |
+| `REGISTRATOR_STATUS_ADDR` | `:8080` | Health/readiness/metrics endpoint’lerinin dinleneceği adres. |
+| `REGISTRATOR_RUNTIME_HOST_IP` | _(empty)_ | Runtime’da host IP zorlaması/override için kullanılır. |
+| `REGISTRATOR_RUNTIME_INTERNAL` | `false` | Internal portları da işleme alma davranışını kontrol eder. |
+| `REGISTRATOR_RUNTIME_EXPLICIT` | `false` | Yalnızca açıkça belirtilen servislerin işlenmesi davranışını kontrol eder. |
+| `REGISTRATOR_RUNTIME_FORCE_TAGS` | _(empty)_ | Tüm servis kayıtlarına eklenecek zorunlu tag listesi. |
+| `REGISTRATOR_RUNTIME_REFRESH_TTL` | `0` | TTL refresh süresi (saniye). `0` ise kapalı. |
+| `REGISTRATOR_RUNTIME_REFRESH_INTERVAL` | `0` | Refresh döngü aralığı (saniye). `0` ise kapalı. |
+| `REGISTRATOR_RUNTIME_DEREGISTER_CHECK` | `always` | Deregister/check davranış politikasını belirler. |
+| `REGISTRATOR_RUNTIME_CLEANUP` | `true` | Başlangıç/çalışma sırasında cleanup davranışını kontrol eder. |
+| `REGISTRATOR_RUNTIME_RETRY_ATTEMPTS` | `10` | Register/deregister retry deneme sayısı (`-1` sonsuz). |
+| `REGISTRATOR_RUNTIME_RETRY_INTERVAL_MS` | `2000` | Retry denemeleri arasındaki bekleme (ms). |
+| `REGISTRATOR_RUNTIME_RESYNC_INTERVAL` | `30` | Periyodik resync aralığı (saniye). |
+| `CONSUL_HTTP_TOKEN` | _(empty)_ | Consul ACL token. Consul client tarafından ortamdan okunur. |
+| `CONSUL_CACERT` | _(empty)_ | `consul-tls` modunda kullanılacak CA sertifika dosya yolu. |
+| `CONSUL_CLIENT_CERT` | _(empty)_ | `consul-tls` modunda kullanılacak istemci sertifika dosya yolu. |
+| `CONSUL_CLIENT_KEY` | _(empty)_ | `consul-tls` modunda kullanılacak istemci private key dosya yolu. |
 
 ## Installation / Kurulum
 

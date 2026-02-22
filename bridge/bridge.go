@@ -114,6 +114,8 @@ func (b *Bridge) Sync(quiet bool) {
 		for _, extService := range extServices {
 			b.serviceHashes[extService.ID] = serviceHash(extService)
 		}
+	} else {
+		log.Println("unable to list backend services during sync:", err)
 	}
 
 	// NOTE: This assumes reregistering will do the right thing, i.e. nothing..

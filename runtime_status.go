@@ -33,7 +33,11 @@ func detectSwarmRuntime(docker *dockerapi.Client) swarmRuntime {
 	if info.Swarm.ControlAvailable {
 		sw.Role = "manager"
 	}
-	hostname, _ := os.Hostname()
+	hostname, err := os.Hostname()
+	if err != nil {
+		log.Printf("unable to get hostname for swarm task detection: %v", err)
+		return sw
+	}
 	container, err := docker.InspectContainer(hostname)
 	if err == nil && container != nil && container.Config != nil {
 		labels := container.Config.Labels
@@ -48,7 +52,6 @@ func serveStatus(addr string, b *bridge.Bridge, eventsProcessed *uint64, reconci
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
 		if err := b.Ping(); err != nil {
@@ -56,7 +59,6 @@ func serveStatus(addr string, b *bridge.Bridge, eventsProcessed *uint64, reconci
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ready"))
 	})
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")

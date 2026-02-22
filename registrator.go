@@ -59,10 +59,6 @@ func main() {
 		os.Exit(0)
 	}
 	log.Printf("Starting registrator %s ...", Version)
-	level, err := logrus.ParseLevel(*logLevel)
-	if err == nil {
-		logrus.SetLevel(level)
-	}
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
@@ -71,7 +67,7 @@ func main() {
 	}
 
 	flag.Parse()
-	level, err = logrus.ParseLevel(*logLevel)
+	level, err := logrus.ParseLevel(*logLevel)
 	if err != nil {
 		assert(err)
 	}
@@ -231,11 +227,11 @@ func main() {
 			if !passiveNode {
 				go b.Remove(msg.ID)
 			}
-		case "unpause", "health_status: healthy":
+		case "unpause", "health_status: healthy", "health_status:healthy":
 			if !passiveNode {
 				go b.Add(msg.ID)
 			}
-		case "health_status: unhealthy":
+		case "health_status: unhealthy", "health_status:unhealthy":
 			if !passiveNode {
 				go b.RemoveOnExit(msg.ID)
 			}

@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 )
 
@@ -9,12 +10,7 @@ func serviceHash(service *Service) string {
 	tags := append([]string{}, service.Tags...)
 	sort.Strings(tags)
 
-	attrs := make(map[string]string, len(service.Attrs))
-	for key, value := range service.Attrs {
-		attrs[key] = value
-	}
-
-	payload, _ := json.Marshal(struct {
+	serviceSignature := struct {
 		ID    string
 		Name  string
 		Port  int
@@ -29,7 +25,11 @@ func serviceHash(service *Service) string {
 		IP:    service.IP,
 		TTL:   service.TTL,
 		Tags:  tags,
-		Attrs: attrs,
-	})
+		Attrs: service.Attrs,
+	}
+	payload, err := json.Marshal(serviceSignature)
+	if err != nil {
+		return fmt.Sprintf("%s|%s|%d|%s|%d", service.ID, service.Name, service.Port, service.IP, service.TTL)
+	}
 	return string(payload)
 }

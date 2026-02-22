@@ -17,6 +17,7 @@ type swarmRuntime struct {
 	Role             string
 	NodeAddr         string
 	RunningAsService bool
+	SwarmServiceID   string
 }
 
 func detectSwarmRuntime(docker *dockerapi.Client) swarmRuntime {
@@ -43,6 +44,7 @@ func detectSwarmRuntime(docker *dockerapi.Client) swarmRuntime {
 		labels := container.Config.Labels
 		if labels["com.docker.swarm.service.id"] != "" {
 			sw.RunningAsService = true
+			sw.SwarmServiceID = labels["com.docker.swarm.service.id"]
 		}
 	}
 	return sw

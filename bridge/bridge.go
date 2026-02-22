@@ -3,6 +3,7 @@ package bridge
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net"
@@ -111,15 +112,27 @@ func (b *Bridge) Sync(quiet bool) {
 
 	extServices, err := b.registry.Services()
 	if err == nil {
-		for _, extService := range extServices {
-			b.serviceHashes[extService.ID] = serviceHash(extService)
-		}
+		b.seedServiceHashes(extServices)
 	} else {
 		log.Println("unable to list backend services during sync:", err)
 	}
 
 	// NOTE: This assumes reregistering will do the right thing, i.e. nothing..
 	for _, listing := range containers {
+		container, inspectErr := b.docker.InspectContainer(listing.ID)
+		if inspectErr != nil {
+			if !quiet {
+				log.Println("unable to inspect container during sync:", listing.ID[:12], inspectErr)
+			}
+			continue
+		}
+		if b.config.Coordinator != nil && !b.config.Coordinator.OwnsContainer(container) {
+			if existing := b.services[listing.ID]; len(existing) > 0 {
+				log.Println("sync: ownership changed, removing local services for", listing.ID[:12])
+				b.remove(listing.ID, true)
+			}
+			continue
+		}
 		services := b.services[listing.ID]
 		if services == nil {
 			b.add(listing.ID, quiet)
@@ -214,6 +227,10 @@ func (b *Bridge) add(containerId string, quiet bool) {
 		log.Println("unable to inspect container:", containerId[:12], err)
 		return
 	}
+	if b.config.Coordinator != nil && !b.config.Coordinator.OwnsContainer(container) {
+		log.Println("ignored:", container.ID[:12], "not owner for container")
+		return
+	}
 
 	ports := make(map[string]ServicePort)
 
@@ -226,6 +243,18 @@ func (b *Bridge) add(containerId string, quiet bool) {
 	// Extract runtime port mappings, relevant when using --net=bridge
 	for port, published := range container.NetworkSettings.Ports {
 		ports[string(port)] = servicePort(container, port, published)
+	}
+	if b.config.ResolveSwarm != nil {
+		if swarmPorts, resolveErr := b.config.ResolveSwarm(container); resolveErr != nil {
+			if !quiet {
+				log.Println("swarm port resolution failed:", container.ID[:12], resolveErr)
+			}
+		} else {
+			for _, resolved := range swarmPorts {
+				key := fmt.Sprintf("%s/%s", resolved.ExposedPort, resolved.PortType)
+				ports[key] = resolved
+			}
+		}
 	}
 
 	if len(ports) == 0 && !quiet {
@@ -265,6 +294,14 @@ func (b *Bridge) add(containerId string, quiet bool) {
 
 func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 	container := port.container
+	if container == nil {
+		var err error
+		container, err = b.docker.InspectContainer(port.ContainerID)
+		if err != nil {
+			log.Println("unable to inspect container for service creation:", port.ContainerID, err)
+			return nil
+		}
+	}
 	defaultName := strings.Split(path.Base(container.Config.Image), ":")[0]
 
 	// not sure about this logic. kind of want to remove it.
@@ -716,6 +753,15 @@ func (b *Bridge) remove(containerId string, deregister bool) {
 
 func (b *Bridge) registerService(service *Service) error {
 	hash := serviceHash(service)
+	if b.config.Coordinator != nil {
+		allowed, err := b.config.Coordinator.BeforeRegister(service, hash)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return nil
+		}
+	}
 	if existingHash, found := b.serviceHashes[service.ID]; found && existingHash == hash {
 		return nil
 	}
@@ -723,14 +769,29 @@ func (b *Bridge) registerService(service *Service) error {
 		return err
 	}
 	b.serviceHashes[service.ID] = hash
+	if b.config.Coordinator != nil {
+		return b.config.Coordinator.AfterRegister(service, hash)
+	}
 	return nil
 }
 
 func (b *Bridge) deregisterService(service *Service) error {
+	if b.config.Coordinator != nil {
+		allowed, err := b.config.Coordinator.BeforeDeregister(service)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return nil
+		}
+	}
 	if err := retry(func() error { return b.registry.Deregister(service) }); err != nil {
 		return err
 	}
 	delete(b.serviceHashes, service.ID)
+	if b.config.Coordinator != nil {
+		return b.config.Coordinator.AfterDeregister(service)
+	}
 	return nil
 }
 
@@ -742,6 +803,12 @@ func (b *Bridge) ServiceCount() int {
 		count += len(services)
 	}
 	return count
+}
+
+func (b *Bridge) seedServiceHashes(services []*Service) {
+	for _, extService := range services {
+		b.serviceHashes[extService.ID] = serviceHash(extService)
+	}
 }
 
 // bit set on ExitCode if it represents an exit via a signal

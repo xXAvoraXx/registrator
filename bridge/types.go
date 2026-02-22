@@ -29,6 +29,16 @@ type Config struct {
 	RefreshInterval int
 	DeregisterCheck string
 	Cleanup         bool
+	Coordinator     Coordinator
+	ResolveSwarm    func(container *dockerapi.Container) ([]ServicePort, error)
+}
+
+type Coordinator interface {
+	OwnsContainer(container *dockerapi.Container) bool
+	BeforeRegister(service *Service, fingerprint string) (bool, error)
+	AfterRegister(service *Service, fingerprint string) error
+	BeforeDeregister(service *Service) (bool, error)
+	AfterDeregister(service *Service) error
 }
 
 type Service struct {

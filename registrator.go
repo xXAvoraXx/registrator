@@ -36,6 +36,11 @@ var cleanup = flag.Bool("cleanup", false, "Remove dangling services")
 var statusAddr = flag.String("status-addr", "", "Address to bind health/readiness/metrics endpoints (disabled when empty)")
 var logLevel = flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 var managerOnly = flag.Bool("swarm-manager-only", true, "When in Swarm mode, only managers perform registrations")
+var advertiseMode = flag.String("advertise-mode", "node-ip", "Address mode for Swarm services: node-ip|service-vip|custom")
+var advertiseIPOverride = flag.String("advertise-ip-override", "", "Custom advertise IP override used by advertise mode")
+var redisAddr = flag.String("redis-addr", "", "Optional redis address for distributed locking/state (host:port)")
+var clusterID = flag.String("cluster-id", "", "Cluster namespace for distributed lock/state keys")
+var managerAPIPort = flag.Int("manager-api-port", 2375, "Docker API port used when querying manager nodes from workers")
 
 var eventsProcessed uint64
 var reconcileRuns uint64
@@ -115,6 +120,8 @@ func main() {
 		assert(errors.New("-deregister must be \"always\" or \"on-success\""))
 	}
 
+	swarmInfo := detectSwarmRuntime(docker)
+	coordinator := newDistributedCoordinator(docker, swarmInfo, *managerOnly, *advertiseMode, *advertiseIPOverride, *redisAddr, *clusterID, *managerAPIPort)
 	b, err := bridge.New(docker, flag.Arg(0), bridge.Config{
 		HostIp:          *hostIp,
 		Internal:        *internal,
@@ -125,17 +132,20 @@ func main() {
 		RefreshInterval: *refreshInterval,
 		DeregisterCheck: *deregister,
 		Cleanup:         *cleanup,
+		Coordinator:     coordinator,
+		ResolveSwarm:    coordinator.ResolveSwarmPorts,
 	})
-
 	assert(err)
 
-	swarmInfo := detectSwarmRuntime(docker)
 	logrus.WithFields(logrus.Fields{
 		"enabled":            swarmInfo.Enabled,
 		"node_id":            swarmInfo.NodeID,
 		"node_role":          swarmInfo.Role,
 		"node_address":       swarmInfo.NodeAddr,
 		"running_as_service": swarmInfo.RunningAsService,
+		"swarm_service_id":   swarmInfo.SwarmServiceID,
+		"cluster_id":         *clusterID,
+		"redis_enabled":      *redisAddr != "",
 	}).Info("runtime swarm status")
 
 	passiveNode := swarmInfo.Enabled && swarmInfo.Role == "worker" && *managerOnly

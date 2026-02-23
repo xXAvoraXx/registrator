@@ -105,6 +105,7 @@ func (r *swarmPortResolver) ResolveSwarmPorts(container *dockerapi.Container) ([
 				fmt.Sprintf("%d", p.TargetPort),
 				portType,
 			)
+			resolved.ExposedIP = network.ip
 			resolved.NetworkNames = []string{network.name}
 			out = append(out, resolved)
 		}

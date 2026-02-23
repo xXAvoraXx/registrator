@@ -67,6 +67,64 @@ func TestServiceNetworksInfoUsesServiceVIPNetworks(t *testing.T) {
 	}
 }
 
+func TestResolveSwarmPortsUsesSelectedNetworkIPForExposedIP(t *testing.T) {
+	serviceID := "service-id"
+	dockerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/version"):
+			_ = json.NewEncoder(w).Encode(map[string]string{"ApiVersion": "1.41"})
+		case strings.Contains(r.URL.Path, "/services/"+serviceID):
+			service := swarmapi.Service{
+				ID: serviceID,
+				Spec: swarmapi.ServiceSpec{
+					EndpointSpec: &swarmapi.EndpointSpec{
+						Ports: []swarmapi.PortConfig{
+							{PublishedPort: 6000, TargetPort: 3000, Protocol: swarmapi.PortConfigProtocolTCP},
+						},
+					},
+				},
+				Endpoint: swarmapi.Endpoint{
+					VirtualIPs: []swarmapi.EndpointVirtualIP{
+						{Addr: "10.0.9.2/24", NetworkID: "app-id"},
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(service)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer dockerServer.Close()
+
+	docker, err := dockerapi.NewVersionedClient(dockerServer.URL, "1.41")
+	if err != nil {
+		t.Fatalf("failed to create docker client: %v", err)
+	}
+	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "manager"}, "", "", 2375, "")
+	container := &dockerapi.Container{
+		Config: &dockerapi.Config{
+			Labels: map[string]string{"com.docker.swarm.service.id": serviceID},
+		},
+		NetworkSettings: &dockerapi.NetworkSettings{
+			IPAddress: "10.0.1.44",
+			Networks: map[string]dockerapi.ContainerNetwork{
+				"app": {IPAddress: "10.0.1.194", NetworkID: "app-id"},
+			},
+		},
+	}
+
+	ports, err := resolver.ResolveSwarmPorts(container)
+	if err != nil {
+		t.Fatalf("expected swarm ports resolution success, got: %v", err)
+	}
+	if len(ports) != 1 {
+		t.Fatalf("expected one resolved swarm port, got: %d", len(ports))
+	}
+	if ports[0].ExposedIP != "10.0.1.194" {
+		t.Fatalf("expected exposed IP from selected network, got: %s", ports[0].ExposedIP)
+	}
+}
+
 func TestManagerAddrsFromNodesUsesManagerRoleWhenManagerStatusMissing(t *testing.T) {
 	nodes := []swarmapi.Node{
 		{

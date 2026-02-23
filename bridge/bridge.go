@@ -149,17 +149,7 @@ func (b *Bridge) Sync(quiet bool) {
 			}
 			continue
 		}
-		services := b.services[listing.ID]
-		if services == nil {
-			b.add(listing.ID, quiet)
-		} else {
-			for _, service := range services {
-				err := b.registerService(service)
-				if err != nil {
-					log.Println("sync register failed:", service, err)
-				}
-			}
-		}
+		b.add(listing.ID, quiet)
 	}
 
 	// Clean up services that were registered previously, but aren't

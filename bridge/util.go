@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"sort"
 	"strconv"
 	"strings"
 
@@ -145,6 +146,11 @@ func servicePort(container *dockerapi.Container, port dockerapi.Port, published 
 			eip = network.IPAddress
 		}
 	}
+	networkNames := make([]string, 0, len(container.NetworkSettings.Networks))
+	for networkName := range container.NetworkSettings.Networks {
+		networkNames = append(networkNames, networkName)
+	}
+	sort.Strings(networkNames)
 
 	return ServicePort{
 		HostPort:          hp,
@@ -152,6 +158,7 @@ func servicePort(container *dockerapi.Container, port dockerapi.Port, published 
 		ExposedPort:       ep,
 		ExposedIP:         eip,
 		PortType:          ept,
+		NetworkNames:      networkNames,
 		ContainerID:       container.ID,
 		ContainerHostname: container.Config.Hostname,
 		container:         container,

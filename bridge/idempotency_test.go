@@ -6,6 +6,19 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+type countingRegistryAdapter struct {
+	registerCalls int
+}
+
+func (c *countingRegistryAdapter) Ping() error { return nil }
+func (c *countingRegistryAdapter) Register(service *Service) error {
+	c.registerCalls++
+	return nil
+}
+func (c *countingRegistryAdapter) Deregister(service *Service) error { return nil }
+func (c *countingRegistryAdapter) Refresh(service *Service) error    { return nil }
+func (c *countingRegistryAdapter) Services() ([]*Service, error)     { return nil, nil }
+
 func TestServiceHashStableForTagOrder(t *testing.T) {
 	svc1 := &Service{
 		ID:    "id-1",
@@ -55,4 +68,21 @@ func TestDuplicateServiceIDsPrefersKnownLocalServiceID(t *testing.T) {
 
 	duplicates := duplicateServiceIDs(services, map[string]struct{}{"current-id": {}})
 	assert.Equal(t, []string{"old-id"}, duplicates)
+}
+
+func TestSeedServiceHashesPrunesStaleHashEntries(t *testing.T) {
+	adapter := &countingRegistryAdapter{}
+	b := &Bridge{
+		registry:      adapter,
+		serviceHashes: map[string]string{},
+	}
+	service := &Service{ID: "svc-1", Name: "svc", IP: "10.0.0.1", Port: 8080}
+	b.serviceHashes[service.ID] = serviceHash(service)
+	b.serviceHashes["stale"] = "stale-hash"
+
+	b.seedServiceHashes(nil)
+	assert.Empty(t, b.serviceHashes)
+
+	assert.NoError(t, b.registerService(service))
+	assert.Equal(t, 1, adapter.registerCalls)
 }

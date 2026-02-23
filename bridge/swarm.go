@@ -9,7 +9,6 @@ func NewResolvedServicePort(container *dockerapi.Container, hostIP, hostPort, ex
 		ExposedPort:         exposedPort,
 		ExposedIP:           container.NetworkSettings.IPAddress,
 		PortType:            portType,
-		PreferPublishedPort: true,
 		ContainerID:         container.ID,
 		ContainerHostname:   container.Config.Hostname,
 		container:           container,

@@ -85,7 +85,7 @@ func TestSyncRebuildsCachedContainerServicesFromFreshInspect(t *testing.T) {
 		},
 		services: map[string][]*Service{
 			containerID: {
-				{ID: "stale:applications-keygen-zrf594_keygen-api.1.qtl800o3p6vhbzta8u4uipr86:3000", Name: "keygen-api", IP: "10.0.1.44", Port: 3000},
+				{ID: "stale:applications-keygen-zrf594_keygen-api.1.qtl800o3p6vhbzta8u4uipr86:3000", Name: "stale-service", IP: "10.0.1.44", Port: 3000},
 			},
 		},
 		serviceHashes:  map[string]string{},

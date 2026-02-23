@@ -4,6 +4,7 @@ import (
 	"sort"
 	"testing"
 
+	dockerapi "github.com/fsouza/go-dockerclient"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -74,4 +75,21 @@ func TestIsRegistratorManagedService(t *testing.T) {
 	assert.False(t, isRegistratorManagedService(&Service{Tags: []string{"db"}}))
 	assert.False(t, isRegistratorManagedService(&Service{Name: "registrator", ID: "worker:custom-service:8080"}))
 	assert.False(t, isRegistratorManagedService(nil))
+}
+
+func TestServicePortIncludesNetworkNames(t *testing.T) {
+	container := &dockerapi.Container{
+		Config:     &dockerapi.Config{},
+		HostConfig: &dockerapi.HostConfig{NetworkMode: "bridge"},
+		NetworkSettings: &dockerapi.NetworkSettings{
+			IPAddress: "172.18.0.4",
+			Networks: map[string]dockerapi.ContainerNetwork{
+				"dokploy-network": {IPAddress: "10.0.1.44"},
+				"registrator":     {IPAddress: "10.0.1.45"},
+			},
+		},
+	}
+
+	port := servicePort(container, dockerapi.Port("3000/tcp"), nil)
+	assert.ElementsMatch(t, []string{"dokploy-network", "registrator"}, port.NetworkNames)
 }

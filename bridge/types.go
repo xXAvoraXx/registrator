@@ -54,14 +54,15 @@ type DeadContainer struct {
 }
 
 type ServicePort struct {
-	HostPort          string
-	HostIP            string
-	ExposedPort       string
-	ExposedIP         string
-	PortType          string
-	NetworkNames      []string
-	ContainerHostname string
-	ContainerID       string
-	ContainerName     string
-	container         *dockerapi.Container
+	HostPort            string
+	HostIP              string
+	ExposedPort         string
+	ExposedIP           string
+	PortType            string
+	NetworkNames        []string
+	PreferPublishedPort bool
+	ContainerHostname   string
+	ContainerID         string
+	ContainerName       string
+	container           *dockerapi.Container
 }

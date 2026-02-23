@@ -88,7 +88,7 @@ func main() {
 	}).Info("runtime swarm status")
 
 	if cfg.Runtime.StatusAddr != "" {
-		go serveStatus(cfg.Runtime.StatusAddr, b, swarmInfo, &eventsProcessed, &reconcileRuns)
+		go serveStatus(cfg.Runtime.StatusAddr, b, swarmInfo, docker, &eventsProcessed, &reconcileRuns)
 	}
 
 	attempt := 0

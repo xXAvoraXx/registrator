@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -100,7 +101,7 @@ func (s swarmRuntime) peerInfo() peerInfo {
 	}
 }
 
-func serveStatus(addr string, b *bridge.Bridge, runtime swarmRuntime, eventsProcessed *uint64, reconcileRuns *uint64) {
+func serveStatus(addr string, b *bridge.Bridge, runtime swarmRuntime, docker *dockerapi.Client, eventsProcessed *uint64, reconcileRuns *uint64) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -121,6 +122,24 @@ func serveStatus(addr string, b *bridge.Bridge, runtime swarmRuntime, eventsProc
 	mux.HandleFunc("/peerinfo", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(runtime.peerInfo())
+	})
+	mux.HandleFunc("/swarm/service/", func(w http.ResponseWriter, req *http.Request) {
+		if docker == nil {
+			http.Error(w, "docker unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		serviceID := strings.TrimPrefix(req.URL.Path, "/swarm/service/")
+		if serviceID == "" || strings.Contains(serviceID, "/") {
+			http.NotFound(w, req)
+			return
+		}
+		service, err := docker.InspectService(serviceID)
+		if err != nil {
+			http.Error(w, "service inspect failed", http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(service)
 	})
 	log.Printf("Serving status endpoints on %s", addr)
 	startPeerDiscovery(runtime, addr, func(info peerInfo) {

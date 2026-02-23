@@ -80,21 +80,17 @@ func TestDuplicateServiceIDsPrefersKnownLocalServiceID(t *testing.T) {
 	assert.Equal(t, []string{"old-id"}, duplicates)
 }
 
-func TestSeedServiceHashesPruneStaleHashEntries(t *testing.T) {
+func TestRegisterServiceDoesNotCacheHashes(t *testing.T) {
 	adapter := &countingRegistryAdapter{}
 	b := &Bridge{
-		registry:      adapter,
-		serviceHashes: map[string]string{},
+		registry: adapter,
 	}
 	service := &Service{ID: "svc-1", Name: "svc", IP: "10.0.0.1", Port: 8080}
-	b.serviceHashes[service.ID] = serviceHash(service)
-	b.serviceHashes["stale"] = "stale-hash"
-
-	b.seedServiceHashes(nil)
-	assert.Empty(t, b.serviceHashes)
 
 	assert.NoError(t, b.registerService(service))
 	assert.Equal(t, 1, adapter.registerCalls)
+	assert.NoError(t, b.registerService(service))
+	assert.Equal(t, 2, adapter.registerCalls)
 }
 
 func TestAddRebuildsExistingContainerServices(t *testing.T) {
@@ -136,7 +132,6 @@ func TestAddRebuildsExistingContainerServices(t *testing.T) {
 		docker:        docker,
 		config:        Config{Internal: true},
 		services:      make(map[string][]*Service),
-		serviceHashes: make(map[string]string),
 	}
 
 	b.add(containerID, false)

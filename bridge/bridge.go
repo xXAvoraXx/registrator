@@ -30,7 +30,6 @@ type Bridge struct {
 	docker         *dockerapi.Client
 	localHostname  string
 	services       map[string][]*Service
-	serviceHashes  map[string]string
 	deadContainers map[string]*DeadContainer
 	config         Config
 }
@@ -59,7 +58,6 @@ func New(docker *dockerapi.Client, adapterUri string, config Config) (*Bridge, e
 		config:         config,
 		registry:       factory.New(uri),
 		services:       make(map[string][]*Service),
-		serviceHashes:  make(map[string]string),
 		deadContainers: make(map[string]*DeadContainer),
 	}, nil
 }
@@ -118,20 +116,6 @@ func (b *Bridge) Sync(quiet bool) {
 	}
 
 	log.Printf("Syncing services on %d containers", len(containers))
-
-	extServices, err := b.registry.Services()
-	if err == nil {
-		managedServices := make([]*Service, 0, len(extServices))
-		for _, extService := range extServices {
-			if !isRegistratorManagedService(extService) {
-				continue
-			}
-			managedServices = append(managedServices, extService)
-		}
-		b.seedServiceHashes(managedServices)
-	} else {
-		log.Println("unable to list backend services during sync:", err)
-	}
 
 	// NOTE: This assumes reregistering will do the right thing, i.e. nothing..
 	for _, listing := range containers {
@@ -234,7 +218,6 @@ func (b *Bridge) Sync(quiet bool) {
 					log.Println("duplicate cleanup deregister failed:", extService.ID, err)
 					continue
 				}
-				delete(b.serviceHashes, extService.ID)
 				log.Println("duplicate removed:", extService.ID)
 			}
 		}
@@ -871,14 +854,9 @@ func (b *Bridge) remove(containerId string, deregister bool) {
 }
 
 func (b *Bridge) registerService(service *Service) error {
-	hash := serviceHash(service)
-	if existingHash, found := b.serviceHashes[service.ID]; found && existingHash == hash {
-		return nil
-	}
 	if err := retry(func() error { return b.registry.Register(service) }); err != nil {
 		return err
 	}
-	b.serviceHashes[service.ID] = hash
 	return nil
 }
 
@@ -886,7 +864,6 @@ func (b *Bridge) deregisterService(service *Service) error {
 	if err := retry(func() error { return b.registry.Deregister(service) }); err != nil {
 		return err
 	}
-	delete(b.serviceHashes, service.ID)
 	return nil
 }
 
@@ -898,14 +875,6 @@ func (b *Bridge) ServiceCount() int {
 		count += len(services)
 	}
 	return count
-}
-
-func (b *Bridge) seedServiceHashes(services []*Service) {
-	seeded := make(map[string]string, len(services))
-	for _, extService := range services {
-		seeded[extService.ID] = serviceHash(extService)
-	}
-	b.serviceHashes = seeded
 }
 
 func (b *Bridge) ownsContainer(container *dockerapi.Container) bool {

@@ -899,9 +899,11 @@ func (b *Bridge) ServiceCount() int {
 }
 
 func (b *Bridge) seedServiceHashes(services []*Service) {
+	seeded := make(map[string]string, len(services))
 	for _, extService := range services {
-		b.serviceHashes[extService.ID] = serviceHash(extService)
+		seeded[extService.ID] = serviceHash(extService)
 	}
+	b.serviceHashes = seeded
 }
 
 func (b *Bridge) ownsContainer(container *dockerapi.Container) bool {

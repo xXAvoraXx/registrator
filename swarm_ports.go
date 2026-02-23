@@ -128,7 +128,11 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 	}
 	log.Printf("swarm manager fallback: querying manager Docker APIs for %s on port %d: %s", serviceID, r.managerAPIPort, strings.Join(managers, ","))
 	op := func() error {
-		for _, addr := range managers {
+		currentManagers := r.managerNodeAddrs()
+		if len(currentManagers) == 0 {
+			return fmt.Errorf("no manager node addresses available for service inspection")
+		}
+		for _, addr := range currentManagers {
 			client, err := dockerapi.NewVersionedClient(fmt.Sprintf("tcp://%s:%d", addr, r.managerAPIPort), defaultDockerAPIVersion)
 			if err != nil {
 				log.Printf("swarm manager fallback: client init failed for manager %s service %s: %v", addr, serviceID, err)
@@ -140,6 +144,7 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 				log.Printf("swarm manager handshake: manager %s:%d reachable for service %s", addr, r.managerAPIPort, serviceID)
 				return nil
 			}
+			forgetManagerAddr(addr)
 			log.Printf("swarm manager fallback: manager inspect failed for %s via %s:%d: %v", serviceID, addr, r.managerAPIPort, err)
 		}
 		return fmt.Errorf("unable to inspect service %s from manager list (worker needs manager Docker API reachability on port %d)", serviceID, r.managerAPIPort)
@@ -168,11 +173,35 @@ func (r *swarmPortResolver) managerNodeAddrs() []string {
 			addrSet[addr] = struct{}{}
 		}
 	}
+	info, err := r.docker.Info()
+	if err == nil {
+		for _, addr := range managerAddrsFromInfo(info) {
+			addrSet[addr] = struct{}{}
+		}
+	}
 	for _, addr := range discoveredManagerAddrs() {
 		addrSet[addr] = struct{}{}
 	}
 	if len(addrSet) == 0 {
 		for _, addr := range r.managerAddrsFromTaskDNS() {
+			addrSet[addr] = struct{}{}
+		}
+	}
+	addrs := make([]string, 0, len(addrSet))
+	for addr := range addrSet {
+		addrs = append(addrs, addr)
+	}
+	sort.Strings(addrs)
+	return addrs
+}
+
+func managerAddrsFromInfo(info *dockerapi.DockerInfo) []string {
+	if info == nil {
+		return nil
+	}
+	addrSet := make(map[string]struct{})
+	for _, peer := range info.Swarm.RemoteManagers {
+		if addr := managerStatusAddr(peer.Addr); addr != "" {
 			addrSet[addr] = struct{}{}
 		}
 	}

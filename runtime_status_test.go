@@ -126,3 +126,19 @@ func TestDiscoverPeersCallsCallbackOncePerPeerSignature(t *testing.T) {
 		t.Fatalf("unexpected discovered manager addresses: %+v", addrs)
 	}
 }
+
+func TestForgetManagerAddrRemovesDiscoveredManager(t *testing.T) {
+	previousManagers := discoveredManagerAddrState
+	discoveredManagerAddrState = sync.Map{}
+	t.Cleanup(func() {
+		discoveredManagerAddrState = previousManagers
+	})
+
+	rememberManagerAddr("10.0.1.62")
+	forgetManagerAddr("10.0.1.62")
+
+	addrs := discoveredManagerAddrs()
+	if len(addrs) != 0 {
+		t.Fatalf("expected discovered manager cache to remove forgotten address, got %+v", addrs)
+	}
+}

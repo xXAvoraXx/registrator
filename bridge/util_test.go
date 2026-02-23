@@ -69,6 +69,9 @@ func TestEnsureTag(t *testing.T) {
 func TestIsRegistratorManagedService(t *testing.T) {
 	assert.True(t, isRegistratorManagedService(&Service{Tags: []string{"db", "registrator"}}))
 	assert.True(t, isRegistratorManagedService(&Service{Tags: []string{"Registrator"}}))
+	assert.True(t, isRegistratorManagedService(&Service{Name: "registrator", ID: "worker:registrator.1.taskid:8080"}))
+	assert.True(t, isRegistratorManagedService(&Service{Name: "Registrator", ID: "worker:Registrator.1.taskid:8080"}))
 	assert.False(t, isRegistratorManagedService(&Service{Tags: []string{"db"}}))
+	assert.False(t, isRegistratorManagedService(&Service{Name: "registrator", ID: "worker:custom-service:8080"}))
 	assert.False(t, isRegistratorManagedService(nil))
 }

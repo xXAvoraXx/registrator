@@ -23,7 +23,6 @@ import (
 )
 
 var serviceIDPattern = regexp.MustCompile(`^(.+?):([a-zA-Z0-9][a-zA-Z0-9_.-]+):[0-9]+(?::udp)?$`)
-const aggregateServiceIDSuffix = ".all"
 
 type Bridge struct {
 	sync.Mutex
@@ -341,8 +340,9 @@ func (b *Bridge) add(containerId string, quiet bool) {
 		} else {
 			for _, resolved := range swarmPorts {
 				key := fmt.Sprintf("%s/%s", resolved.ExposedPort, resolved.PortType)
-				if len(resolved.NetworkNames) > 0 {
-					key += "/" + resolved.NetworkNames[0]
+				// Swarm can return the same published port per attached network; keep a single registration per exposed port.
+				if _, exists := ports[key]; exists {
+					continue
 				}
 				ports[key] = resolved
 			}
@@ -381,26 +381,6 @@ func (b *Bridge) add(containerId string, quiet bool) {
 		}
 		b.services[container.ID] = append(b.services[container.ID], service)
 		log.Println("added:", container.ID[:12], service.ID)
-		if len(port.NetworkNames) == 1 {
-			networkName := port.NetworkNames[0]
-			networkSuffix := "." + networkName + "." + port.ExposedPort
-			if strings.HasSuffix(service.Name, networkSuffix) {
-				baseName := strings.TrimSuffix(service.Name, networkSuffix)
-				aggregate := *service
-				aggregate.Name = baseName
-				aggregate.ID = appendServiceIDNameSuffix(service.ID, aggregateServiceIDSuffix)
-				if aggregate.ID == service.ID {
-					continue
-				}
-				err := b.registerService(&aggregate)
-				if err != nil {
-					log.Println("register failed:", &aggregate, err)
-					continue
-				}
-				b.services[container.ID] = append(b.services[container.ID], &aggregate)
-				log.Println("added:", container.ID[:12], aggregate.ID)
-			}
-		}
 	}
 }
 
@@ -472,15 +452,9 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 	service := new(Service)
 	service.Origin = port
 	idName := container.Name[1:]
-	hasNetworkQualifier := len(port.NetworkNames) == 1
-	if hasNetworkQualifier {
-		idName = idName + "." + port.NetworkNames[0]
-	}
 	service.ID = b.resolveServiceID(hostname, idName, port.ExposedPort)
 	service.Name = serviceName
-	if hasNetworkQualifier && !metadataFromPort["name"] {
-		service.Name = fmt.Sprintf("%s.%s.%s", serviceName, port.NetworkNames[0], port.ExposedPort)
-	} else if isgroup && !metadataFromPort["name"] {
+	if isgroup && !metadataFromPort["name"] {
 		service.Name += "-" + port.ExposedPort
 	}
 	var p int

@@ -87,22 +87,17 @@ func TestManagerAddrsFromNodesUsesManagerRoleWhenManagerStatusMissing(t *testing
 
 func TestInspectServiceWorkerLocalFirstThenManagerFallback(t *testing.T) {
 	var serviceCalls int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	localDocker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "/version"):
 			_ = json.NewEncoder(w).Encode(map[string]string{"ApiVersion": "1.41"})
 		case strings.Contains(r.URL.Path, "/services/service-id"):
-			call := atomic.AddInt32(&serviceCalls, 1)
+			atomic.AddInt32(&serviceCalls, 1)
 			service := swarmapi.Service{
 				ID: "service-id",
 				Spec: swarmapi.ServiceSpec{
 					EndpointSpec: &swarmapi.EndpointSpec{},
 				},
-			}
-			if call > 1 {
-				service.Spec.EndpointSpec.Ports = []swarmapi.PortConfig{
-					{PublishedPort: 5432, TargetPort: 5432, Protocol: swarmapi.PortConfigProtocolTCP},
-				}
 			}
 			_ = json.NewEncoder(w).Encode(service)
 		case strings.Contains(r.URL.Path, "/nodes"):
@@ -117,21 +112,41 @@ func TestInspectServiceWorkerLocalFirstThenManagerFallback(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	}))
-	defer server.Close()
+	defer localDocker.Close()
 
-	u, err := url.Parse(server.URL)
+	peerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/swarm/service/service-id" {
+			http.NotFound(w, r)
+			return
+		}
+		service := swarmapi.Service{
+			ID: "service-id",
+			Spec: swarmapi.ServiceSpec{
+				EndpointSpec: &swarmapi.EndpointSpec{
+					Ports: []swarmapi.PortConfig{
+						{PublishedPort: 5432, TargetPort: 5432, Protocol: swarmapi.PortConfigProtocolTCP},
+					},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(service)
+	}))
+	defer peerServer.Close()
+
+	u, err := url.Parse(peerServer.URL)
 	if err != nil {
 		t.Fatalf("failed to parse server URL: %v", err)
 	}
-	port, err := strconv.Atoi(u.Port())
+	peerPort := u.Port()
+	port, err := strconv.Atoi(peerPort)
 	if err != nil {
 		t.Fatalf("failed to parse server port: %v", err)
 	}
-	docker, err := dockerapi.NewVersionedClient(server.URL, defaultDockerAPIVersion)
+	docker, err := dockerapi.NewVersionedClient(localDocker.URL, defaultDockerAPIVersion)
 	if err != nil {
 		t.Fatalf("failed to create docker client: %v", err)
 	}
-	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", port, "")
+	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", port, peerPort)
 	var buf bytes.Buffer
 	previousLogWriter := log.Writer()
 	log.SetOutput(&buf)
@@ -146,15 +161,15 @@ func TestInspectServiceWorkerLocalFirstThenManagerFallback(t *testing.T) {
 	if service.Spec.EndpointSpec == nil || len(service.Spec.EndpointSpec.Ports) != 1 {
 		t.Fatalf("expected manager fallback to return service with ports, got: %+v", service.Spec.EndpointSpec)
 	}
-	if got := atomic.LoadInt32(&serviceCalls); got != 2 {
-		t.Fatalf("expected local inspect then manager inspect (2 calls), got %d", got)
+	if got := atomic.LoadInt32(&serviceCalls); got != 1 {
+		t.Fatalf("expected local inspect only once before peer fallback, got %d", got)
 	}
 	logOutput := buf.String()
-	attemptLog := fmt.Sprintf("swarm manager handshake: attempting manager 127.0.0.1:%d for service service-id", port)
+	attemptLog := fmt.Sprintf("swarm manager handshake: attempting manager peer 127.0.0.1:%s for service service-id", peerPort)
 	if !strings.Contains(logOutput, attemptLog) {
 		t.Fatalf("expected handshake attempt log, got: %s", logOutput)
 	}
-	successLog := fmt.Sprintf("swarm manager handshake: manager 127.0.0.1:%d reachable for service service-id", port)
+	successLog := fmt.Sprintf("swarm manager handshake: manager peer 127.0.0.1:%s reachable for service service-id", peerPort)
 	if !strings.Contains(logOutput, successLog) {
 		t.Fatalf("expected handshake success log, got: %s", logOutput)
 	}

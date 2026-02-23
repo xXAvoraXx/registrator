@@ -128,51 +128,30 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 	managers := r.managerNodeAddrs()
 	if len(managers) == 0 {
 		if err != nil {
-			return nil, fmt.Errorf("unable to inspect service %s locally (%v) and from manager list: no manager node address discovered (check swarm manager availability and Docker API access)", serviceID, err)
+			return nil, fmt.Errorf("unable to inspect service %s locally (%v) and from manager list: no manager node address discovered (check swarm manager availability and peer reachability)", serviceID, err)
 		}
-		return nil, fmt.Errorf("unable to inspect service %s: local inspection returned no published ports and no manager node address discovered (check swarm manager availability and Docker API access)", serviceID)
+		return nil, fmt.Errorf("unable to inspect service %s: local inspection returned no published ports and no manager node address discovered (check swarm manager availability and peer reachability)", serviceID)
 	}
-	log.Printf("swarm manager fallback: querying manager Docker APIs for %s on port %d: %s", serviceID, r.managerAPIPort, strings.Join(managers, ","))
+	log.Printf("swarm manager fallback: querying manager peers for %s on port %s: %s", serviceID, r.peerInfoPort, strings.Join(managers, ","))
 	op := func() error {
 		currentManagers := r.managerNodeAddrs()
 		if len(currentManagers) == 0 {
 			return fmt.Errorf("no manager node addresses available for service inspection")
 		}
 		for _, addr := range currentManagers {
-			client, err := dockerapi.NewVersionedClient(fmt.Sprintf("tcp://%s:%d", addr, r.managerAPIPort), defaultDockerAPIVersion)
-			if err != nil {
-				log.Printf("swarm manager fallback: client init failed for manager %s service %s: %v", addr, serviceID, err)
-				if r.peerInfoPort != "" {
-					log.Printf("swarm manager handshake: attempting manager peer %s:%s for service %s", addr, r.peerInfoPort, serviceID)
-					service, err = r.inspectServiceViaPeer(addr, serviceID)
-					if err == nil {
-						log.Printf("swarm manager handshake: manager peer %s:%s reachable for service %s", addr, r.peerInfoPort, serviceID)
-						return nil
-					}
-					log.Printf("swarm manager fallback: manager peer inspect failed for %s via %s:%s: %v", serviceID, addr, r.peerInfoPort, err)
-				}
-				forgetManagerAddr(addr)
-				continue
+			if r.peerInfoPort == "" {
+				return fmt.Errorf("manager peer status port is not configured")
 			}
-			log.Printf("swarm manager handshake: attempting manager %s:%d for service %s", addr, r.managerAPIPort, serviceID)
-			service, err = client.InspectService(serviceID)
+			log.Printf("swarm manager handshake: attempting manager peer %s:%s for service %s", addr, r.peerInfoPort, serviceID)
+			service, err = r.inspectServiceViaPeer(addr, serviceID)
 			if err == nil {
-				log.Printf("swarm manager handshake: manager %s:%d reachable for service %s", addr, r.managerAPIPort, serviceID)
+				log.Printf("swarm manager handshake: manager peer %s:%s reachable for service %s", addr, r.peerInfoPort, serviceID)
 				return nil
 			}
-			if r.peerInfoPort != "" {
-				log.Printf("swarm manager handshake: attempting manager peer %s:%s for service %s", addr, r.peerInfoPort, serviceID)
-				service, err = r.inspectServiceViaPeer(addr, serviceID)
-				if err == nil {
-					log.Printf("swarm manager handshake: manager peer %s:%s reachable for service %s", addr, r.peerInfoPort, serviceID)
-					return nil
-				}
-				log.Printf("swarm manager fallback: manager peer inspect failed for %s via %s:%s: %v", serviceID, addr, r.peerInfoPort, err)
-			}
 			forgetManagerAddr(addr)
-			log.Printf("swarm manager fallback: manager inspect failed for %s via %s:%d: %v", serviceID, addr, r.managerAPIPort, err)
+			log.Printf("swarm manager fallback: manager peer inspect failed for %s via %s:%s: %v", serviceID, addr, r.peerInfoPort, err)
 		}
-		return fmt.Errorf("unable to inspect service %s from manager list (worker needs manager Docker API reachability on port %d)", serviceID, r.managerAPIPort)
+		return fmt.Errorf("unable to inspect service %s from manager list (worker needs manager peer reachability on port %s)", serviceID, r.peerInfoPort)
 	}
 	exp := backoff.NewExponentialBackOff()
 	exp.MaxElapsedTime = managerRetryTimeout

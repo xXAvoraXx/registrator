@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 const (
 	defaultDockerAPIVersion = "1.41"
 	managerRetryTimeout     = 5 * time.Second
+	peerInfoRequestTimeout  = 2 * time.Second
 )
 
 var lookupIP = net.LookupIP
@@ -27,6 +29,7 @@ type swarmPortResolver struct {
 	advertiseMode     string
 	advertiseOverride string
 	managerAPIPort    int
+	peerInfoPort      string
 }
 
 type serviceNetwork struct {
@@ -34,13 +37,14 @@ type serviceNetwork struct {
 	ip   string
 }
 
-func newSwarmPortResolver(docker *dockerapi.Client, runtime swarmRuntime, advertiseMode, advertiseOverride string, managerAPIPort int) *swarmPortResolver {
+func newSwarmPortResolver(docker *dockerapi.Client, runtime swarmRuntime, advertiseMode, advertiseOverride string, managerAPIPort int, peerInfoPort string) *swarmPortResolver {
 	return &swarmPortResolver{
 		docker:            docker,
 		runtime:           runtime,
 		advertiseMode:     advertiseMode,
 		advertiseOverride: advertiseOverride,
 		managerAPIPort:    managerAPIPort,
+		peerInfoPort:      peerInfoPort,
 	}
 }
 
@@ -211,6 +215,33 @@ func (r *swarmPortResolver) managerAddrsFromTaskDNS() []string {
 		addrs = append(addrs, addr)
 	}
 	sort.Strings(addrs)
+	if r.peerInfoPort != "" {
+		client := &http.Client{Timeout: peerInfoRequestTimeout}
+		managerAddrSet := make(map[string]struct{})
+		for _, addr := range addrs {
+			if net.ParseIP(addr) == nil {
+				continue
+			}
+			info, err := fetchPeerInfo(client, "http://"+net.JoinHostPort(addr, r.peerInfoPort)+"/peerinfo")
+			if err != nil || info.Role != "manager" {
+				continue
+			}
+			if info.NodeAddr != "" {
+				managerAddrSet[info.NodeAddr] = struct{}{}
+			}
+			if info.OverlayIP != "" {
+				managerAddrSet[info.OverlayIP] = struct{}{}
+			}
+		}
+		if len(managerAddrSet) > 0 {
+			managerAddrs := make([]string, 0, len(managerAddrSet))
+			for addr := range managerAddrSet {
+				managerAddrs = append(managerAddrs, addr)
+			}
+			sort.Strings(managerAddrs)
+			return managerAddrs
+		}
+	}
 	return addrs
 }
 

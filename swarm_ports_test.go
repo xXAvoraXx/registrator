@@ -24,7 +24,7 @@ func TestInspectServiceNoManagerAddress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create docker client: %v", err)
 	}
-	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", 2375)
+	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", 2375, "")
 
 	_, err = resolver.inspectService("service-id")
 	if err == nil {
@@ -131,7 +131,7 @@ func TestInspectServiceWorkerLocalFirstThenManagerFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create docker client: %v", err)
 	}
-	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", port)
+	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", port, "")
 	var buf bytes.Buffer
 	previousLogWriter := log.Writer()
 	log.SetOutput(&buf)
@@ -194,7 +194,7 @@ func TestManagerNodeAddrsFallsBackToDiscoveredPeers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create docker client: %v", err)
 	}
-	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", 2375)
+	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", 2375, "")
 	addrs := resolver.managerNodeAddrs()
 	if len(addrs) != 1 || addrs[0] != "10.0.1.44" {
 		t.Fatalf("expected discovered manager address fallback, got %+v", addrs)
@@ -225,9 +225,68 @@ func TestManagerNodeAddrsFallsBackToTaskDNSWhenManagersUnknown(t *testing.T) {
 		RunningAsService: true,
 		SwarmServiceName: "registrator",
 		OverlayIP:        "10.0.1.57",
-	}, "", "", 2375)
+	}, "", "", 2375, "")
 	addrs := resolver.managerNodeAddrs()
 	if len(addrs) != 1 || addrs[0] != "10.0.1.56" {
 		t.Fatalf("expected task DNS fallback manager candidates, got %+v", addrs)
+	}
+}
+
+func TestManagerAddrsFromTaskDNSPrefersManagerNodeAddrFromPeerInfo(t *testing.T) {
+	previousLookupIP := lookupIP
+	lookupIP = func(host string) ([]net.IP, error) {
+		if host != "tasks.registrator" {
+			t.Fatalf("unexpected lookup host %q", host)
+		}
+		return []net.IP{net.ParseIP("127.0.0.1")}, nil
+	}
+	t.Cleanup(func() {
+		lookupIP = previousLookupIP
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(peerInfo{
+			ServiceID:   "svc-1",
+			ServiceName: "registrator",
+			TaskID:      "task-1",
+			NodeID:      "node-1",
+			NodeAddr:    "100.101.0.70",
+			Hostname:    "manager-1",
+			OverlayIP:   "10.0.1.70",
+			Role:        "manager",
+		})
+	}))
+	defer server.Close()
+	u, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("failed to parse server URL: %v", err)
+	}
+	_, port, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		t.Fatalf("failed to parse host and port: %v", err)
+	}
+
+	docker, err := dockerapi.NewClient("unix:///tmp/registrator-missing-docker.sock")
+	if err != nil {
+		t.Fatalf("failed to create docker client: %v", err)
+	}
+	resolver := newSwarmPortResolver(docker, swarmRuntime{
+		Role:             "worker",
+		RunningAsService: true,
+		SwarmServiceName: "registrator",
+	}, "", "", 2375, port)
+	addrs := resolver.managerAddrsFromTaskDNS()
+	if len(addrs) != 2 {
+		t.Fatalf("expected manager node+overlay addresses from peer info, got %+v", addrs)
+	}
+	got := map[string]struct{}{}
+	for _, addr := range addrs {
+		got[addr] = struct{}{}
+	}
+	if _, ok := got["10.0.1.70"]; !ok {
+		t.Fatalf("expected manager overlay address in result, got %+v", addrs)
+	}
+	if _, ok := got["100.101.0.70"]; !ok {
+		t.Fatalf("expected manager node address in result, got %+v", addrs)
 	}
 }

@@ -138,10 +138,10 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 		if len(currentManagers) == 0 {
 			return fmt.Errorf("no manager node addresses available for service inspection")
 		}
+		if r.peerInfoPort == "" {
+			return fmt.Errorf("manager peer status port is not configured")
+		}
 		for _, addr := range currentManagers {
-			if r.peerInfoPort == "" {
-				return fmt.Errorf("manager peer status port is not configured")
-			}
 			log.Printf("swarm manager handshake: attempting manager peer %s:%s for service %s", addr, r.peerInfoPort, serviceID)
 			service, err = r.inspectServiceViaPeer(addr, serviceID)
 			if err == nil {

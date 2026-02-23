@@ -34,6 +34,7 @@ register an HTTP health check with the service.
 
 ```bash
 SERVICE_80_CHECK_HTTP=/health/endpoint/path
+SERVICE_80_CHECK_HTTP_PORT=8080		# optional, check target port override
 SERVICE_80_CHECK_INTERVAL=15s
 SERVICE_80_CHECK_TIMEOUT=1s		# optional, Consul default used otherwise
 SERVICE_80_CHECK_HTTP_METHOD=HEAD	# optional, Consul default used otherwise
@@ -41,6 +42,8 @@ SERVICE_80_CHECK_HTTP_METHOD=HEAD	# optional, Consul default used otherwise
 
 It works for services on any port, not just 80. If its the only service,
 you can also use `SERVICE_CHECK_HTTP`.
+For multi-port containers, `SERVICE_CHECK_HTTP` defaults to the lowest exposed
+TCP port; override explicitly with `SERVICE_CHECK_HTTP_PORT`.
 
 ### Consul HTTPS Check
 

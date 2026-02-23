@@ -117,7 +117,13 @@ func (r *ConsulAdapter) buildCheck(service *bridge.Service) *consulapi.AgentServ
 		check.Status = status
 	}
 	if path := service.Attrs["check_http"]; path != "" {
-		check.HTTP = fmt.Sprintf("http://%s:%d%s", service.IP, service.Port, path)
+		checkPort := service.Port
+		if override := service.Attrs["check_http_port"]; override != "" {
+			if parsed, err := strconv.Atoi(override); err == nil {
+				checkPort = parsed
+			}
+		}
+		check.HTTP = fmt.Sprintf("http://%s:%d%s", service.IP, checkPort, path)
 		if timeout := service.Attrs["check_timeout"]; timeout != "" {
 			check.Timeout = timeout
 		}
@@ -125,7 +131,13 @@ func (r *ConsulAdapter) buildCheck(service *bridge.Service) *consulapi.AgentServ
 			check.Method = method
 		}
 	} else if path := service.Attrs["check_https"]; path != "" {
-		check.HTTP = fmt.Sprintf("https://%s:%d%s", service.IP, service.Port, path)
+		checkPort := service.Port
+		if override := service.Attrs["check_https_port"]; override != "" {
+			if parsed, err := strconv.Atoi(override); err == nil {
+				checkPort = parsed
+			}
+		}
+		check.HTTP = fmt.Sprintf("https://%s:%d%s", service.IP, checkPort, path)
 		if timeout := service.Attrs["check_timeout"]; timeout != "" {
 			check.Timeout = timeout
 		}

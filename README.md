@@ -198,7 +198,9 @@ Any other `SERVICE_*` key is passed as lower-cased service metadata attribute (`
 | Key pattern | Used by | Meaning |
 |---|---|---|
 | `SERVICE_CHECK_HTTP`, `SERVICE_<PORT>_CHECK_HTTP` | Consul | HTTP check path (ex: `/health`). |
+| `SERVICE_CHECK_HTTP_PORT`, `SERVICE_<PORT>_CHECK_HTTP_PORT` | Consul | Override HTTP check target port (default: lowest exposed TCP port for generic `SERVICE_CHECK_HTTP`). |
 | `SERVICE_CHECK_HTTPS`, `SERVICE_<PORT>_CHECK_HTTPS` | Consul | HTTPS check path. |
+| `SERVICE_CHECK_HTTPS_PORT`, `SERVICE_<PORT>_CHECK_HTTPS_PORT` | Consul | Override HTTPS check target port (default: lowest exposed TCP port for generic `SERVICE_CHECK_HTTPS`). |
 | `SERVICE_CHECK_TCP`, `SERVICE_<PORT>_CHECK_TCP` | Consul | Enable TCP check. |
 | `SERVICE_CHECK_GRPC`, `SERVICE_<PORT>_CHECK_GRPC` | Consul | Enable gRPC check. |
 | `SERVICE_CHECK_SCRIPT`, `SERVICE_<PORT>_CHECK_SCRIPT` | Consul | Script command (supports `$SERVICE_IP` and `$SERVICE_PORT`). |

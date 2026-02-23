@@ -191,3 +191,35 @@ func TestAppendServiceIDNameSuffix(t *testing.T) {
 		appendServiceIDNameSuffix("worker:taskid.dokploy-network:53:udp", ".all"),
 	)
 }
+
+func TestGenericCheckHTTPUsesStableLowestPort(t *testing.T) {
+	container := &dockerapi.Container{
+		ID:   "abc123",
+		Name: "/api.1.taskid",
+		Config: &dockerapi.Config{
+			Image: "api:latest",
+			Env:   []string{"SERVICE_CHECK_HTTP=/healthz"},
+			ExposedPorts: map[dockerapi.Port]struct{}{
+				"8080/tcp": {},
+				"8090/tcp": {},
+				"9090/tcp": {},
+			},
+		},
+		HostConfig: &dockerapi.HostConfig{},
+		NetworkSettings: &dockerapi.NetworkSettings{
+			IPAddress: "10.0.0.5",
+		},
+	}
+
+	b := &Bridge{config: Config{Internal: true}}
+	service := b.newService(ServicePort{
+		ExposedIP:   "10.0.0.5",
+		ExposedPort: "9090",
+		PortType:    "tcp",
+		container:   container,
+	}, true)
+
+	assert.NotNil(t, service)
+	assert.Equal(t, "/healthz", service.Attrs["check_http"])
+	assert.Equal(t, "8080", service.Attrs["check_http_port"])
+}

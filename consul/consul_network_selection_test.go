@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	dockerapi "github.com/fsouza/go-dockerclient"
+	"github.com/gliderlabs/registrator/bridge"
 	"github.com/stretchr/testify/assert"
 	consulapi "github.com/hashicorp/consul/api"
 )
@@ -77,4 +78,19 @@ func TestResolveAddressFallsBackWhenDockerResolveFails(t *testing.T) {
 	address, err := adapter.resolveAddress(nil)
 	assert.NoError(t, err)
 	assert.Equal(t, "127.0.0.1:8500", address)
+}
+
+func TestBuildCheckUsesCheckHTTPPortOverride(t *testing.T) {
+	adapter := &ConsulAdapter{}
+	service := &bridge.Service{
+		IP:   "10.0.0.5",
+		Port: 9090,
+		Attrs: map[string]string{
+			"check_http":      "/healthz",
+			"check_http_port": "8080",
+		},
+	}
+
+	check := adapter.buildCheck(service)
+	assert.Equal(t, "http://10.0.0.5:8080/healthz", check.HTTP)
 }

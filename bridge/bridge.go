@@ -263,12 +263,17 @@ func (b *Bridge) Sync(quiet bool) {
 			staleAddress := false
 			for _, listing := range b.services {
 				for _, service := range listing {
+					// Defensive guard: keep cleanup resilient if a transient nil slot appears.
+					if service == nil {
+						continue
+					}
 					containerName := ""
-					if service != nil && service.Origin.container != nil {
+					if service.Origin.container != nil {
 						containerName = strings.TrimPrefix(service.Origin.container.Name, "/")
 					}
-					if service != nil && service.Name == extService.Name && serviceContainerName == containerName {
+					if service.Name == extService.Name && serviceContainerName == containerName {
 						matchedLocalService = true
+						// Empty backend IP cannot be validated against Docker networks; keep existing dangling rules.
 						if extService.IP != "" && !isIPKnownInDockerNetworks(extService.IP, runningContainerIPs) {
 							staleAddress = true
 							log.Printf("dangling: %s stale address %s is not present in running Docker container networks", extService.ID, extService.IP)
@@ -1029,6 +1034,17 @@ func cleanupUnhealthyReason(container *dockerapi.Container) string {
 func (b *Bridge) runningContainerIPs(listings []dockerapi.APIContainers) map[string]struct{} {
 	ips := make(map[string]struct{})
 	for _, listing := range listings {
+		foundInListing := false
+		for _, network := range listing.Networks.Networks {
+			if network.IPAddress == "" {
+				continue
+			}
+			ips[network.IPAddress] = struct{}{}
+			foundInListing = true
+		}
+		if foundInListing {
+			continue
+		}
 		container, err := b.docker.InspectContainer(listing.ID)
 		if err != nil {
 			continue

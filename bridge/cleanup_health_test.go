@@ -52,3 +52,20 @@ func TestCollectContainerIPsAndKnownCheck(t *testing.T) {
 		t.Fatalf("did not expect unknown IP to be marked as known")
 	}
 }
+
+func TestRunningContainerIPsUsesListingNetworkIPs(t *testing.T) {
+	b := &Bridge{}
+	ips := b.runningContainerIPs([]dockerapi.APIContainers{
+		{
+			ID: "container-1",
+			Networks: dockerapi.NetworkList{
+				Networks: map[string]dockerapi.ContainerNetwork{
+					"app": {IPAddress: "10.10.0.5"},
+				},
+			},
+		},
+	})
+	if !isIPKnownInDockerNetworks("10.10.0.5", ips) {
+		t.Fatalf("expected listing network IP to be known")
+	}
+}

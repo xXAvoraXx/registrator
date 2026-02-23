@@ -39,8 +39,8 @@ SERVICE_80_CHECK_TIMEOUT=1s		# optional, Consul default used otherwise
 SERVICE_80_CHECK_HTTP_METHOD=HEAD	# optional, Consul default used otherwise
 ```
 
-It works for services on any port, not just 80. If its the only service,
-you can also use `SERVICE_CHECK_HTTP`.
+It works for services on any port, not just 80. `SERVICE_CHECK_HTTP` applies
+to all exposed ports, and `SERVICE_<PORT>_CHECK_HTTP` overrides it per-port.
 
 ### Consul HTTPS Check
 

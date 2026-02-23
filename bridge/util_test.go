@@ -93,3 +93,24 @@ func TestServicePortIncludesNetworkNames(t *testing.T) {
 	port := servicePort(container, dockerapi.Port("3000/tcp"), nil)
 	assert.ElementsMatch(t, []string{"dokploy-network", "registrator"}, port.NetworkNames)
 }
+
+func TestServiceMetaDataAppliesGenericCheckToAllPorts(t *testing.T) {
+	config := &dockerapi.Config{
+		Env: []string{
+			"SERVICE_CHECK_HTTP=/health",
+			"SERVICE_CHECK_INTERVAL=15s",
+			"SERVICE_80_CHECK_HTTP=/health-80",
+			"SERVICE_80_CHECK_TIMEOUT=1s",
+		},
+	}
+
+	meta80, _ := serviceMetaData(config, "80")
+	assert.Equal(t, "/health-80", meta80["check_http"])
+	assert.Equal(t, "15s", meta80["check_interval"])
+	assert.Equal(t, "1s", meta80["check_timeout"])
+
+	meta443, _ := serviceMetaData(config, "443")
+	assert.Equal(t, "/health", meta443["check_http"])
+	assert.Equal(t, "15s", meta443["check_interval"])
+	assert.Empty(t, meta443["check_timeout"])
+}

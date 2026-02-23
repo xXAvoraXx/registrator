@@ -151,7 +151,7 @@ func TestSwarmNetworkServiceNameAndIDStayStable(t *testing.T) {
 	}, true)
 
 	assert.NotNil(t, service)
-	assert.Equal(t, "registrator-2375", service.Name)
+	assert.Equal(t, "registrator", service.Name)
 	assert.Equal(t, "worker-hostname:registrator.1.taskid:2375", service.ID)
 	assert.ElementsMatch(t, []string{"dokploy-network", "registrator"}, service.Tags)
 }

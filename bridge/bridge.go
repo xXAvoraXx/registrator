@@ -417,7 +417,7 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 		port.HostIP = b.config.HostIp
 	}
 
-	metadata, metadataFromPort := serviceMetaData(container.Config, port.ExposedPort)
+	metadata, _ := serviceMetaData(container.Config, port.ExposedPort)
 	runtimeLabels := make(map[string]string)
 	for k, v := range container.Config.Labels {
 		runtimeLabels[k] = v
@@ -454,9 +454,6 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 	idName := container.Name[1:]
 	service.ID = b.resolveServiceID(hostname, idName, port.ExposedPort)
 	service.Name = serviceName
-	if isgroup && !metadataFromPort["name"] {
-		service.Name += "-" + port.ExposedPort
-	}
 	var p int
 
 	if b.config.Internal {

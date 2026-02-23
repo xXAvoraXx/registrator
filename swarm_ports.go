@@ -19,6 +19,8 @@ const (
 	managerRetryTimeout     = 5 * time.Second
 )
 
+var lookupIP = net.LookupIP
+
 type swarmPortResolver struct {
 	docker            *dockerapi.Client
 	runtime           swarmRuntime
@@ -167,6 +169,35 @@ func (r *swarmPortResolver) managerNodeAddrs() []string {
 		}
 	}
 	for _, addr := range discoveredManagerAddrs() {
+		addrSet[addr] = struct{}{}
+	}
+	if len(addrSet) == 0 {
+		for _, addr := range r.managerAddrsFromTaskDNS() {
+			addrSet[addr] = struct{}{}
+		}
+	}
+	addrs := make([]string, 0, len(addrSet))
+	for addr := range addrSet {
+		addrs = append(addrs, addr)
+	}
+	sort.Strings(addrs)
+	return addrs
+}
+
+func (r *swarmPortResolver) managerAddrsFromTaskDNS() []string {
+	if !r.runtime.RunningAsService || r.runtime.SwarmServiceName == "" {
+		return nil
+	}
+	ips, err := lookupIP("tasks." + r.runtime.SwarmServiceName)
+	if err != nil {
+		return nil
+	}
+	addrSet := make(map[string]struct{})
+	for _, ip := range ips {
+		addr := ip.String()
+		if addr == "" || addr == r.runtime.OverlayIP {
+			continue
+		}
 		addrSet[addr] = struct{}{}
 	}
 	addrs := make([]string, 0, len(addrSet))

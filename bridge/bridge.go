@@ -328,7 +328,9 @@ func (b *Bridge) add(containerId string, quiet bool) {
 		} else {
 			for _, resolved := range swarmPorts {
 				key := fmt.Sprintf("%s/%s", resolved.ExposedPort, resolved.PortType)
-				// Swarm can return the same published port per attached network; keep a single registration per exposed port.
+				if len(resolved.NetworkNames) > 0 {
+					key = fmt.Sprintf("%s@%s", key, strings.Join(resolved.NetworkNames, ","))
+				}
 				if _, exists := ports[key]; exists {
 					continue
 				}
@@ -354,6 +356,11 @@ func (b *Bridge) add(containerId string, quiet bool) {
 	}
 
 	isGroup := len(servicePorts) > 1
+	portRegistrations := make(map[string]int, len(servicePorts))
+	for _, port := range servicePorts {
+		portKey := fmt.Sprintf("%s/%s", port.ExposedPort, port.PortType)
+		portRegistrations[portKey]++
+	}
 	for _, port := range servicePorts {
 		service := b.newService(port, isGroup)
 		if service == nil {
@@ -361,6 +368,10 @@ func (b *Bridge) add(containerId string, quiet bool) {
 				log.Println("ignored:", container.ID[:12], "service on port", port.ExposedPort)
 			}
 			continue
+		}
+		portKey := fmt.Sprintf("%s/%s", port.ExposedPort, port.PortType)
+		if portRegistrations[portKey] > 1 && len(port.NetworkNames) > 0 {
+			service.ID = appendServiceIDNameSuffix(service.ID, "."+port.NetworkNames[0])
 		}
 		err := b.registerService(service)
 		if err != nil {

@@ -59,7 +59,7 @@ func TestResolvedSwarmPortKeepsServiceIDFormat(t *testing.T) {
 	assert.Equal(t, "vps-74f5f77e:persistence-keygen-db-pj46xk.1.m69empeguslu19zx9fbmaqnz0:5432", service.ID)
 }
 
-func TestResolvedSwarmPortUsesPublishedPortForAddressWhenInternal(t *testing.T) {
+func TestResolvedSwarmPortUsesTargetPortForAddressWhenInternal(t *testing.T) {
 	previousHostname := Hostname
 	Hostname = "vps-74f5f77e"
 	defer func() { Hostname = previousHostname }()
@@ -80,7 +80,7 @@ func TestResolvedSwarmPortUsesPublishedPortForAddressWhenInternal(t *testing.T) 
 
 	assert.NotNil(t, service)
 	assert.Equal(t, "vps-74f5f77e:applications-keygen-zrf594_keygen-api.1.0he9h1ksvgydzexi84w6lkpog:3000", service.ID)
-	assert.Equal(t, 6000, service.Port)
+	assert.Equal(t, 3000, service.Port)
 	assert.Equal(t, "10.0.1.44", service.IP)
 }
 

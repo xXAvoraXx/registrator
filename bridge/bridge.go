@@ -417,7 +417,6 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 	}
 
 	metadata, metadataFromPort := serviceMetaData(container.Config, port.ExposedPort)
-	_ = metadataFromPort // service names are no longer port-suffixed by exposed port
 	runtimeLabels := make(map[string]string)
 	for k, v := range container.Config.Labels {
 		runtimeLabels[k] = v
@@ -433,6 +432,18 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 		}
 	}
 	metadata = applyRuntimeOverrides(metadata, runtimeLabels)
+	genericHTTPCheck := metadata["check_http"] != "" && metadata["check_http_port"] == "" && !metadataFromPort["check_http"]
+	if genericHTTPCheck {
+		if checkPort := defaultHTTPCheckPort(container); checkPort != "" {
+			metadata["check_http_port"] = checkPort
+		}
+	}
+	genericHTTPSCheck := metadata["check_https"] != "" && metadata["check_https_port"] == "" && !metadataFromPort["check_https"]
+	if genericHTTPSCheck {
+		if checkPort := defaultHTTPCheckPort(container); checkPort != "" {
+			metadata["check_https_port"] = checkPort
+		}
+	}
 
 	ignore := mapDefault(metadata, "ignore", "")
 	if ignore != "" {

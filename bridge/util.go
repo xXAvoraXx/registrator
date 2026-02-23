@@ -164,3 +164,36 @@ func servicePort(container *dockerapi.Container, port dockerapi.Port, published 
 		container:         container,
 	}
 }
+
+// defaultHTTPCheckPort returns the lowest exposed TCP port for the container, or "" when none are found.
+func defaultHTTPCheckPort(container *dockerapi.Container) string {
+	if container == nil {
+		return ""
+	}
+	ports := make([]int, 0)
+	addPort := func(port dockerapi.Port) {
+		if port.Proto() != "tcp" {
+			return
+		}
+		parsed, err := strconv.Atoi(port.Port())
+		if err != nil || parsed <= 0 {
+			return
+		}
+		ports = append(ports, parsed)
+	}
+	if container.Config != nil {
+		for port := range container.Config.ExposedPorts {
+			addPort(port)
+		}
+	}
+	if container.NetworkSettings != nil {
+		for port := range container.NetworkSettings.Ports {
+			addPort(port)
+		}
+	}
+	if len(ports) == 0 {
+		return ""
+	}
+	sort.Ints(ports)
+	return strconv.Itoa(ports[0])
+}

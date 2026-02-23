@@ -2,16 +2,18 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
-	"strings"
 	"testing"
 
 	dockerapi "github.com/fsouza/go-dockerclient"
+	"github.com/gliderlabs/registrator/bridge"
 )
 
 func TestDetectSwarmRuntimeReadsSwarmTaskLabels(t *testing.T) {
@@ -140,5 +142,45 @@ func TestForgetManagerAddrRemovesDiscoveredManager(t *testing.T) {
 	addrs := discoveredManagerAddrs()
 	if len(addrs) != 0 {
 		t.Fatalf("expected discovered manager cache to remove forgotten address, got %+v", addrs)
+	}
+}
+
+func TestStatusMuxServesHealthAndMetrics(t *testing.T) {
+	b := &bridge.Bridge{}
+	var eventsProcessed uint64 = 7
+	var reconcileRuns uint64 = 3
+	server := httptest.NewServer(statusMux(b, swarmRuntime{}, nil, &eventsProcessed, &reconcileRuns))
+	defer server.Close()
+
+	healthResp, err := server.Client().Get(server.URL + "/healthz")
+	if err != nil {
+		t.Fatalf("healthz request failed: %v", err)
+	}
+	defer healthResp.Body.Close()
+	if healthResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected /healthz status 200, got %d", healthResp.StatusCode)
+	}
+
+	metricsResp, err := server.Client().Get(server.URL + "/metrics")
+	if err != nil {
+		t.Fatalf("metrics request failed: %v", err)
+	}
+	defer metricsResp.Body.Close()
+	if metricsResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected /metrics status 200, got %d", metricsResp.StatusCode)
+	}
+	body, err := io.ReadAll(metricsResp.Body)
+	if err != nil {
+		t.Fatalf("failed to read metrics response body: %v", err)
+	}
+	metrics := string(body)
+	if !strings.Contains(metrics, "registrator_registered_services 0") {
+		t.Fatalf("expected service count metric in response, got %q", metrics)
+	}
+	if !strings.Contains(metrics, "registrator_events_processed_total 7") {
+		t.Fatalf("expected events metric in response, got %q", metrics)
+	}
+	if !strings.Contains(metrics, "registrator_reconcile_runs_total 3") {
+		t.Fatalf("expected reconcile metric in response, got %q", metrics)
 	}
 }

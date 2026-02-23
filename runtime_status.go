@@ -103,6 +103,21 @@ func (s swarmRuntime) peerInfo() peerInfo {
 }
 
 func serveStatus(addr string, b *bridge.Bridge, runtime swarmRuntime, docker *dockerapi.Client, eventsProcessed *uint64, reconcileRuns *uint64) {
+	mux := statusMux(b, runtime, docker, eventsProcessed, reconcileRuns)
+	log.Printf("Serving status endpoints on %s", addr)
+	startPeerDiscovery(runtime, addr, func(info peerInfo) {
+		if info.Role != "manager" {
+			return
+		}
+		b.Sync(true)
+		atomic.AddUint64(reconcileRuns, 1)
+	})
+	if err := http.ListenAndServe(addr, mux); err != nil {
+		log.Printf("status server stopped: %v", err)
+	}
+}
+
+func statusMux(b *bridge.Bridge, runtime swarmRuntime, docker *dockerapi.Client, eventsProcessed *uint64, reconcileRuns *uint64) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -144,17 +159,7 @@ func serveStatus(addr string, b *bridge.Bridge, runtime swarmRuntime, docker *do
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(service)
 	})
-	log.Printf("Serving status endpoints on %s", addr)
-	startPeerDiscovery(runtime, addr, func(info peerInfo) {
-		if info.Role != "manager" {
-			return
-		}
-		b.Sync(true)
-		atomic.AddUint64(reconcileRuns, 1)
-	})
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Printf("status server stopped: %v", err)
-	}
+	return mux
 }
 
 func startPeerDiscovery(runtime swarmRuntime, addr string, onPeerDiscovered func(peerInfo)) {

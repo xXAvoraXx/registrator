@@ -159,7 +159,7 @@ Supported environment variables:
 | `REGISTRATOR_SERVICE_ID_FORMAT` | `{hostname}:{name}:{port}` | Format string for generated service IDs. |
 | `REGISTRATOR_DOCKER_ENDPOINT` | `unix:///var/run/docker.sock` | Docker API endpoint. |
 | `REGISTRATOR_DOCKER_SWARM_MODE` | `true` | Enables/disables Swarm-aware behavior. |
-| `REGISTRATOR_STATUS_ADDR` | `:8080` | Listen address for health/readiness/metrics and `/peerinfo` endpoints. |
+| `REGISTRATOR_STATUS_ADDR` | `:8080` | Listen address for health/readiness/metrics and `/peerinfo` endpoints (these endpoints are served only on this address/port). |
 | `REGISTRATOR_RUNTIME_HOST_IP` | _(empty)_ | Runtime host IP override. |
 | `REGISTRATOR_RUNTIME_INTERNAL` | `false` | Controls whether internal ports are processed. |
 | `REGISTRATOR_RUNTIME_EXPLICIT` | `false` | Controls processing of only explicitly declared services. |

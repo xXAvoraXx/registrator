@@ -132,8 +132,10 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 				log.Printf("swarm manager fallback: client init failed for manager %s service %s: %v", addr, serviceID, err)
 				continue
 			}
+			log.Printf("swarm manager handshake: attempting manager %s:%d for service %s", addr, r.managerAPIPort, serviceID)
 			service, err = client.InspectService(serviceID)
 			if err == nil {
+				log.Printf("swarm manager handshake: manager %s:%d reachable for service %s", addr, r.managerAPIPort, serviceID)
 				return nil
 			}
 			log.Printf("swarm manager fallback: manager inspect failed for %s via %s:%d: %v", serviceID, addr, r.managerAPIPort, err)

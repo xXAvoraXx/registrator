@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -128,6 +130,12 @@ func TestInspectServiceWorkerLocalFirstThenManagerFallback(t *testing.T) {
 		t.Fatalf("failed to create docker client: %v", err)
 	}
 	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", port)
+	var buf bytes.Buffer
+	prevOut := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+	})
 
 	service, err := resolver.inspectService("service-id")
 	if err != nil {
@@ -138,6 +146,13 @@ func TestInspectServiceWorkerLocalFirstThenManagerFallback(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&serviceCalls); got != 2 {
 		t.Fatalf("expected local inspect then manager inspect (2 calls), got %d", got)
+	}
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, "swarm manager handshake: attempting manager") {
+		t.Fatalf("expected handshake attempt log, got: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "swarm manager handshake: manager") || !strings.Contains(logOutput, "reachable for service service-id") {
+		t.Fatalf("expected handshake success log, got: %s", logOutput)
 	}
 }
 

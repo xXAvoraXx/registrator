@@ -26,3 +26,29 @@ func TestCleanupUnhealthyReason(t *testing.T) {
 		t.Fatalf("expected healthy container to have no cleanup reason, got %q", got)
 	}
 }
+
+func TestCollectContainerIPsAndKnownCheck(t *testing.T) {
+	ips := make(map[string]struct{})
+	collectContainerIPs(&dockerapi.Container{
+		NetworkSettings: &dockerapi.NetworkSettings{
+			IPAddress: "172.18.0.10",
+			Networks: map[string]dockerapi.ContainerNetwork{
+				"app":     {IPAddress: "10.0.1.20"},
+				"ingress": {IPAddress: "10.0.9.30"},
+			},
+		},
+	}, ips)
+
+	if !isIPKnownInDockerNetworks("172.18.0.10", ips) {
+		t.Fatalf("expected primary network IP to be known")
+	}
+	if !isIPKnownInDockerNetworks("10.0.1.20", ips) {
+		t.Fatalf("expected overlay network IP to be known")
+	}
+	if !isIPKnownInDockerNetworks("10.0.9.30", ips) {
+		t.Fatalf("expected ingress network IP to be known")
+	}
+	if isIPKnownInDockerNetworks("10.0.8.40", ips) {
+		t.Fatalf("did not expect unknown IP to be marked as known")
+	}
+}

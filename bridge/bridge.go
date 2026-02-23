@@ -174,6 +174,7 @@ func (b *Bridge) Sync(quiet bool) {
 			log.Println("error listing nonExitedContainers, skipping sync", err)
 			return
 		}
+		runningContainerIPs := b.runningContainerIPs(nonExitedContainers)
 		for listingId := range b.services {
 			found := false
 			for _, container := range nonExitedContainers {
@@ -258,12 +259,29 @@ func (b *Bridge) Sync(quiet bool) {
 				continue
 			}
 			serviceContainerName := matches[2]
+			matchedLocalService := false
+			staleAddress := false
 			for _, listing := range b.services {
 				for _, service := range listing {
-					if service.Name == extService.Name && serviceContainerName == service.Origin.container.Name[1:] {
-						continue Outer
+					containerName := ""
+					if service != nil && service.Origin.container != nil {
+						containerName = strings.TrimPrefix(service.Origin.container.Name, "/")
+					}
+					if service != nil && service.Name == extService.Name && serviceContainerName == containerName {
+						matchedLocalService = true
+						if extService.IP != "" && !isIPKnownInDockerNetworks(extService.IP, runningContainerIPs) {
+							staleAddress = true
+							log.Printf("dangling: %s stale address %s is not present in running Docker container networks", extService.ID, extService.IP)
+						}
+						break
 					}
 				}
+				if matchedLocalService {
+					break
+				}
+			}
+			if matchedLocalService && !staleAddress {
+				continue Outer
 			}
 			log.Println("dangling:", extService.ID)
 			err := b.registry.Deregister(extService)
@@ -1006,6 +1024,38 @@ func cleanupUnhealthyReason(container *dockerapi.Container) string {
 		return "container health is unhealthy"
 	}
 	return ""
+}
+
+func (b *Bridge) runningContainerIPs(listings []dockerapi.APIContainers) map[string]struct{} {
+	ips := make(map[string]struct{})
+	for _, listing := range listings {
+		container, err := b.docker.InspectContainer(listing.ID)
+		if err != nil {
+			continue
+		}
+		collectContainerIPs(container, ips)
+	}
+	return ips
+}
+
+func collectContainerIPs(container *dockerapi.Container, ips map[string]struct{}) {
+	if container == nil || container.NetworkSettings == nil {
+		return
+	}
+	if container.NetworkSettings.IPAddress != "" {
+		ips[container.NetworkSettings.IPAddress] = struct{}{}
+	}
+	for _, network := range container.NetworkSettings.Networks {
+		if network.IPAddress == "" {
+			continue
+		}
+		ips[network.IPAddress] = struct{}{}
+	}
+}
+
+func isIPKnownInDockerNetworks(ip string, ips map[string]struct{}) bool {
+	_, ok := ips[ip]
+	return ok
 }
 
 // bit set on ExitCode if it represents an exit via a signal

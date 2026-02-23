@@ -70,7 +70,7 @@ func TestDuplicateServiceIDsPrefersKnownLocalServiceID(t *testing.T) {
 	assert.Equal(t, []string{"old-id"}, duplicates)
 }
 
-func TestSeedServiceHashesPrunesStaleHashEntries(t *testing.T) {
+func TestSeedServiceHashesPruneStaleHashEntries(t *testing.T) {
 	adapter := &countingRegistryAdapter{}
 	b := &Bridge{
 		registry:      adapter,

@@ -78,6 +78,11 @@ func TestDiscoverPeersCallsCallbackOncePerPeerSignature(t *testing.T) {
 	t.Cleanup(func() {
 		peerDiscoveryLogState = previousState
 	})
+	previousManagers := discoveredManagerAddrState
+	discoveredManagerAddrState = sync.Map{}
+	t.Cleanup(func() {
+		discoveredManagerAddrState = previousManagers
+	})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(peerInfo{
 			ServiceID:   "svc-1",
@@ -112,5 +117,28 @@ func TestDiscoverPeersCallsCallbackOncePerPeerSignature(t *testing.T) {
 
 	if got := atomic.LoadInt32(&callbackCalls); got != 1 {
 		t.Fatalf("expected callback to run once for identical manager signature, got %d", got)
+	}
+	addrs := discoveredManagerAddrs()
+	if len(addrs) != 2 {
+		t.Fatalf("expected overlay and peer manager addresses to be recorded, got %+v", addrs)
+	}
+	if !(addrs[0] == "10.0.1.172" || addrs[1] == "10.0.1.172") || !(addrs[0] == host || addrs[1] == host) {
+		t.Fatalf("unexpected discovered manager addresses: %+v", addrs)
+	}
+}
+
+func TestForgetManagerAddrRemovesDiscoveredManager(t *testing.T) {
+	previousManagers := discoveredManagerAddrState
+	discoveredManagerAddrState = sync.Map{}
+	t.Cleanup(func() {
+		discoveredManagerAddrState = previousManagers
+	})
+
+	rememberManagerAddr("10.0.1.62")
+	forgetManagerAddr("10.0.1.62")
+
+	addrs := discoveredManagerAddrs()
+	if len(addrs) != 0 {
+		t.Fatalf("expected discovered manager cache to remove forgotten address, got %+v", addrs)
 	}
 }

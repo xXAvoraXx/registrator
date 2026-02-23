@@ -148,7 +148,6 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 				log.Printf("swarm manager handshake: manager peer %s:%s reachable for service %s", addr, r.peerInfoPort, serviceID)
 				return nil
 			}
-			forgetManagerAddr(addr)
 			log.Printf("swarm manager fallback: manager peer inspect failed for %s via %s:%s: %v", serviceID, addr, r.peerInfoPort, err)
 		}
 		return fmt.Errorf("unable to inspect service %s from manager list (worker needs manager peer reachability on port %s)", serviceID, r.peerInfoPort)
@@ -194,9 +193,6 @@ func (r *swarmPortResolver) managerNodeAddrs() []string {
 		for _, addr := range managerAddrsFromNodes(nodes) {
 			addrSet[addr] = struct{}{}
 		}
-	}
-	for _, addr := range discoveredManagerAddrs() {
-		addrSet[addr] = struct{}{}
 	}
 	if len(addrSet) == 0 {
 		for _, addr := range r.managerAddrsFromTaskDNS() {

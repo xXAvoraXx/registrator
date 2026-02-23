@@ -305,9 +305,8 @@ func (b *Bridge) add(containerId string, quiet bool) {
 	}
 
 	if b.services[containerId] != nil {
-		log.Println("container, ", containerId[:12], ", already exists, ignoring")
-		// Alternatively, remove and readd or resubmit.
-		return
+		log.Println("container,", containerId[:12], "already exists, rebuilding services")
+		delete(b.services, containerId)
 	}
 
 	container, err := b.docker.InspectContainer(containerId)

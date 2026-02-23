@@ -219,20 +219,39 @@ func TestInspectServiceFallsBackToManagerPeerWhenDockerAPIUnavailable(t *testing
 	if err != nil {
 		t.Fatalf("failed to create docker client: %v", err)
 	}
-	unused, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to reserve test port: %v", err)
-	}
-	managerAPIPort := unused.Addr().(*net.TCPAddr).Port
-	_ = unused.Close()
-
-	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", managerAPIPort, peerPort)
+	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", 0, peerPort)
 	service, err := resolver.inspectService("service-id")
 	if err != nil {
 		t.Fatalf("expected peer fallback inspect success, got: %v", err)
 	}
 	if service.Spec.EndpointSpec == nil || len(service.Spec.EndpointSpec.Ports) != 1 {
 		t.Fatalf("expected manager peer fallback to return service with ports, got: %+v", service.Spec.EndpointSpec)
+	}
+}
+
+func TestInspectServiceViaPeerReturnsErrorOnNonOKStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "nope", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	u, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("failed to parse server URL: %v", err)
+	}
+	host, port, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		t.Fatalf("failed to parse host and port: %v", err)
+	}
+
+	docker, err := dockerapi.NewClient("unix:///tmp/registrator-missing-docker.sock")
+	if err != nil {
+		t.Fatalf("failed to create docker client: %v", err)
+	}
+	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", 2375, port)
+	_, err = resolver.inspectServiceViaPeer(host, "service-id")
+	if err == nil || !strings.Contains(err.Error(), "status 502") {
+		t.Fatalf("expected non-200 status error, got: %v", err)
 	}
 }
 

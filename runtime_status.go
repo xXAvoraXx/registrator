@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sort"
@@ -128,14 +129,16 @@ func serveStatus(addr string, b *bridge.Bridge, runtime swarmRuntime, docker *do
 			http.Error(w, "docker unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		serviceID := strings.TrimPrefix(req.URL.Path, "/swarm/service/")
-		if serviceID == "" || strings.Contains(serviceID, "/") {
+		escapedServiceID := strings.TrimPrefix(req.URL.EscapedPath(), "/swarm/service/")
+		serviceID, err := url.PathUnescape(escapedServiceID)
+		if err != nil || serviceID == "" || strings.Contains(serviceID, "/") || strings.Contains(serviceID, "\\") || strings.Contains(serviceID, "..") {
 			http.NotFound(w, req)
 			return
 		}
 		service, err := docker.InspectService(serviceID)
 		if err != nil {
-			http.Error(w, "service inspect failed", http.StatusBadGateway)
+			log.Printf("status swarm service inspect failed for %s: %v", serviceID, err)
+			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

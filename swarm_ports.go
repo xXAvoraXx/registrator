@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -140,6 +142,16 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 			client, err := dockerapi.NewVersionedClient(fmt.Sprintf("tcp://%s:%d", addr, r.managerAPIPort), defaultDockerAPIVersion)
 			if err != nil {
 				log.Printf("swarm manager fallback: client init failed for manager %s service %s: %v", addr, serviceID, err)
+				if r.peerInfoPort != "" {
+					log.Printf("swarm manager handshake: attempting manager peer %s:%s for service %s", addr, r.peerInfoPort, serviceID)
+					service, err = r.inspectServiceViaPeer(addr, serviceID)
+					if err == nil {
+						log.Printf("swarm manager handshake: manager peer %s:%s reachable for service %s", addr, r.peerInfoPort, serviceID)
+						return nil
+					}
+					log.Printf("swarm manager fallback: manager peer inspect failed for %s via %s:%s: %v", serviceID, addr, r.peerInfoPort, err)
+				}
+				forgetManagerAddr(addr)
 				continue
 			}
 			log.Printf("swarm manager handshake: attempting manager %s:%d for service %s", addr, r.managerAPIPort, serviceID)
@@ -147,6 +159,15 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 			if err == nil {
 				log.Printf("swarm manager handshake: manager %s:%d reachable for service %s", addr, r.managerAPIPort, serviceID)
 				return nil
+			}
+			if r.peerInfoPort != "" {
+				log.Printf("swarm manager handshake: attempting manager peer %s:%s for service %s", addr, r.peerInfoPort, serviceID)
+				service, err = r.inspectServiceViaPeer(addr, serviceID)
+				if err == nil {
+					log.Printf("swarm manager handshake: manager peer %s:%s reachable for service %s", addr, r.peerInfoPort, serviceID)
+					return nil
+				}
+				log.Printf("swarm manager fallback: manager peer inspect failed for %s via %s:%s: %v", serviceID, addr, r.peerInfoPort, err)
 			}
 			forgetManagerAddr(addr)
 			log.Printf("swarm manager fallback: manager inspect failed for %s via %s:%d: %v", serviceID, addr, r.managerAPIPort, err)
@@ -157,6 +178,24 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 	exp.MaxElapsedTime = managerRetryTimeout
 	retryErr := backoff.Retry(op, exp)
 	return service, retryErr
+}
+
+func (r *swarmPortResolver) inspectServiceViaPeer(addr, serviceID string) (*swarmapi.Service, error) {
+	client := &http.Client{Timeout: peerInfoRequestTimeout}
+	endpoint := "http://" + net.JoinHostPort(addr, r.peerInfoPort) + "/swarm/service/" + url.PathEscape(serviceID)
+	resp, err := client.Get(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("manager peer service inspect status %d", resp.StatusCode)
+	}
+	var service swarmapi.Service
+	if err := json.NewDecoder(resp.Body).Decode(&service); err != nil {
+		return nil, err
+	}
+	return &service, nil
 }
 
 func serviceHasPublishedPorts(service *swarmapi.Service) bool {

@@ -268,11 +268,12 @@ In `Discovery.Mode=local`, Registrator resolves the local Consul agent via Docke
 
 For Swarm service containers, Registrator resolves service ports from Swarm service endpoint metadata.  
 On worker nodes, it can query manager nodes in sorted order (with backoff retries) for authoritative service `EndpointSpec.Ports`, reducing dependence on local worker-only container networking details.
-This communication path is worker -> Docker manager API (`runtime.managerAPIPort`), not registrator-to-registrator peer RPC.
+Primary communication path is worker -> Docker manager API (`runtime.managerAPIPort`); when that is unreachable, workers fall back to manager registrator peer RPC on `REGISTRATOR_STATUS_ADDR` (`/swarm/service/{id}`) over task network addresses.
 
 Troubleshooting:
 
 - If workers cannot resolve swarm service ports, verify manager Docker API reachability on `runtime.managerAPIPort` (default `2375`).
+- Also verify manager `REGISTRATOR_STATUS_ADDR` is reachable on the task network so peer fallback can fetch `/swarm/service/{id}`.
 - Publishing `2375` as an ingress port on the registrator service is not what this lookup uses; workers connect directly to manager node addresses discovered via Docker node metadata and manager peer discovery.
 
 ### Swarm service registration stability

@@ -177,6 +177,51 @@ Supported environment variables:
 | `CONSUL_CLIENT_CERT` | _(empty)_ | Client certificate file path used in `consul-tls` mode. |
 | `CONSUL_CLIENT_KEY` | _(empty)_ | Client private key file path used in `consul-tls` mode. |
 
+### Container/service metadata overrides (`SERVICE_*`)
+
+Registrator also inspects container **env vars and labels** prefixed with `SERVICE_` while building each registration.
+
+- `SERVICE_<KEY>=...` applies to all exposed services in the container.
+- `SERVICE_<EXPOSED_PORT>_<KEY>=...` applies only to that exposed port and overrides the generic key.
+
+Core keys used directly by Registrator:
+
+| Key pattern | Meaning |
+|---|---|
+| `SERVICE_NAME`, `SERVICE_<PORT>_NAME` | Override generated service name. |
+| `SERVICE_ID`, `SERVICE_<PORT>_ID` | Override generated service ID. |
+| `SERVICE_TAGS`, `SERVICE_<PORT>_TAGS` | Comma-separated tag list (supports escaped commas like `\,`). |
+| `SERVICE_IGNORE`, `SERVICE_<PORT>_IGNORE` | Ignore container/service when set to any non-empty value. |
+
+Any other `SERVICE_*` key is passed as lower-cased service metadata attribute (`Service.Attrs`) to adapters. Frequently used ones:
+
+| Key pattern | Used by | Meaning |
+|---|---|---|
+| `SERVICE_CHECK_HTTP`, `SERVICE_<PORT>_CHECK_HTTP` | Consul | HTTP check path (ex: `/health`). |
+| `SERVICE_CHECK_HTTPS`, `SERVICE_<PORT>_CHECK_HTTPS` | Consul | HTTPS check path. |
+| `SERVICE_CHECK_TCP`, `SERVICE_<PORT>_CHECK_TCP` | Consul | Enable TCP check. |
+| `SERVICE_CHECK_GRPC`, `SERVICE_<PORT>_CHECK_GRPC` | Consul | Enable gRPC check. |
+| `SERVICE_CHECK_SCRIPT`, `SERVICE_<PORT>_CHECK_SCRIPT` | Consul | Script command (supports `$SERVICE_IP` and `$SERVICE_PORT`). |
+| `SERVICE_CHECK_CMD`, `SERVICE_<PORT>_CHECK_CMD` | Consul | Docker health check bridge command (no interpolation). |
+| `SERVICE_CHECK_TTL`, `SERVICE_<PORT>_CHECK_TTL` | Consul | TTL check duration (ex: `30s`). |
+| `SERVICE_CHECK_INTERVAL`, `SERVICE_<PORT>_CHECK_INTERVAL` | Consul | Check interval (default `10s` for non-TTL checks). |
+| `SERVICE_CHECK_TIMEOUT`, `SERVICE_<PORT>_CHECK_TIMEOUT` | Consul | Check timeout. |
+| `SERVICE_CHECK_HTTP_METHOD`, `SERVICE_<PORT>_CHECK_HTTP_METHOD` | Consul | HTTP method for HTTP check. |
+| `SERVICE_CHECK_HTTPS_METHOD`, `SERVICE_<PORT>_CHECK_HTTPS_METHOD` | Consul | HTTP method for HTTPS check. |
+| `SERVICE_CHECK_GRPC_USE_TLS`, `SERVICE_<PORT>_CHECK_GRPC_USE_TLS` | Consul | Enable TLS for gRPC checks. |
+| `SERVICE_CHECK_TLS_SKIP_VERIFY`, `SERVICE_<PORT>_CHECK_TLS_SKIP_VERIFY` | Consul | Skip TLS cert verification in checks. |
+| `SERVICE_CHECK_INITIAL_STATUS`, `SERVICE_<PORT>_CHECK_INITIAL_STATUS` | Consul | Initial check status (`passing`, etc.). |
+| `SERVICE_CHECK_DEREGISTER_AFTER`, `SERVICE_<PORT>_CHECK_DEREGISTER_AFTER` | Consul | Deregister after critical duration. |
+
+Runtime label overrides also affect discovery resolution per service:
+
+| Label | Effect |
+|---|---|
+| `service.name` | Overrides service name (same effect as `SERVICE_NAME`). |
+| `service.discovery.mode` | Overrides discovery mode for that service (`local`, `service`, etc.). |
+| `service.discovery.address` | Overrides discovery backend address for that service. |
+| `service.discovery.name` | Overrides discovery service name used in `service` mode. |
+
 ## Service ownership
 
 Registrator-managed service registrations always include the `registrator` tag.  

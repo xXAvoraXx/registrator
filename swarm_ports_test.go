@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -197,5 +198,36 @@ func TestManagerNodeAddrsFallsBackToDiscoveredPeers(t *testing.T) {
 	addrs := resolver.managerNodeAddrs()
 	if len(addrs) != 1 || addrs[0] != "10.0.1.44" {
 		t.Fatalf("expected discovered manager address fallback, got %+v", addrs)
+	}
+}
+
+func TestManagerNodeAddrsFallsBackToTaskDNSWhenManagersUnknown(t *testing.T) {
+	previousLookupIP := lookupIP
+	lookupIP = func(host string) ([]net.IP, error) {
+		if host != "tasks.registrator" {
+			t.Fatalf("unexpected lookup host %q", host)
+		}
+		return []net.IP{
+			net.ParseIP("10.0.1.56"),
+			net.ParseIP("10.0.1.57"),
+		}, nil
+	}
+	t.Cleanup(func() {
+		lookupIP = previousLookupIP
+	})
+
+	docker, err := dockerapi.NewClient("unix:///tmp/registrator-missing-docker.sock")
+	if err != nil {
+		t.Fatalf("failed to create docker client: %v", err)
+	}
+	resolver := newSwarmPortResolver(docker, swarmRuntime{
+		Role:             "worker",
+		RunningAsService: true,
+		SwarmServiceName: "registrator",
+		OverlayIP:        "10.0.1.57",
+	}, "", "", 2375)
+	addrs := resolver.managerNodeAddrs()
+	if len(addrs) != 1 || addrs[0] != "10.0.1.56" {
+		t.Fatalf("expected task DNS fallback manager candidates, got %+v", addrs)
 	}
 }

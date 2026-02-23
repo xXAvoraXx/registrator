@@ -85,7 +85,7 @@ func TestSyncRebuildsCachedContainerServicesFromFreshInspect(t *testing.T) {
 		},
 		services: map[string][]*Service{
 			containerID: {
-				{ID: "worker:applications-keygen-zrf594_keygen-api.1.qtl800o3p6vhbzta8u4uipr86:3000", Name: "keygen-api", IP: "10.0.1.44", Port: 3000},
+				{ID: "stale:applications-keygen-zrf594_keygen-api.1.qtl800o3p6vhbzta8u4uipr86:3000", Name: "keygen-api", IP: "10.0.1.44", Port: 3000},
 			},
 		},
 		serviceHashes:  map[string]string{},
@@ -95,5 +95,8 @@ func TestSyncRebuildsCachedContainerServicesFromFreshInspect(t *testing.T) {
 	b.Sync(true)
 
 	require.NotEmpty(t, b.services[containerID])
+	assert.Equal(t, "app", b.services[containerID][0].Name)
+	assert.Equal(t, 3000, b.services[containerID][0].Port)
+	assert.Contains(t, b.services[containerID][0].ID, ":3000")
 	assert.Equal(t, currentIP, b.services[containerID][0].IP)
 }

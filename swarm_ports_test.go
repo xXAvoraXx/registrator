@@ -276,7 +276,17 @@ func TestManagerAddrsFromTaskDNSPrefersManagerNodeAddrFromPeerInfo(t *testing.T)
 		SwarmServiceName: "registrator",
 	}, "", "", 2375, port)
 	addrs := resolver.managerAddrsFromTaskDNS()
-	if len(addrs) != 2 || addrs[0] != "10.0.1.70" || addrs[1] != "100.101.0.70" {
+	if len(addrs) != 2 {
 		t.Fatalf("expected manager node+overlay addresses from peer info, got %+v", addrs)
+	}
+	got := map[string]struct{}{}
+	for _, addr := range addrs {
+		got[addr] = struct{}{}
+	}
+	if _, ok := got["10.0.1.70"]; !ok {
+		t.Fatalf("expected manager overlay address in result, got %+v", addrs)
+	}
+	if _, ok := got["100.101.0.70"]; !ok {
+		t.Fatalf("expected manager node address in result, got %+v", addrs)
 	}
 }

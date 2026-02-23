@@ -18,6 +18,7 @@ import (
 const (
 	defaultDockerAPIVersion = "1.41"
 	managerRetryTimeout     = 5 * time.Second
+	peerInfoRequestTimeout  = 2 * time.Second
 )
 
 var lookupIP = net.LookupIP
@@ -215,9 +216,12 @@ func (r *swarmPortResolver) managerAddrsFromTaskDNS() []string {
 	}
 	sort.Strings(addrs)
 	if r.peerInfoPort != "" {
-		client := &http.Client{Timeout: 2 * time.Second}
+		client := &http.Client{Timeout: peerInfoRequestTimeout}
 		managerAddrSet := make(map[string]struct{})
 		for _, addr := range addrs {
+			if net.ParseIP(addr) == nil {
+				continue
+			}
 			info, err := fetchPeerInfo(client, "http://"+net.JoinHostPort(addr, r.peerInfoPort)+"/peerinfo")
 			if err != nil || info.Role != "manager" {
 				continue

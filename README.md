@@ -190,7 +190,7 @@ Core keys used directly by Registrator:
 |---|---|
 | `SERVICE_NAME`, `SERVICE_<PORT>_NAME` | Override generated service name. |
 | `SERVICE_ID`, `SERVICE_<PORT>_ID` | Override generated service ID. |
-| `SERVICE_TAGS`, `SERVICE_<PORT>_TAGS` | Comma-separated tag list (supports escaped commas like `\\,`). |
+| `SERVICE_TAGS`, `SERVICE_<PORT>_TAGS` | Comma-separated tag list (supports escaped commas like `\,`). |
 | `SERVICE_IGNORE`, `SERVICE_<PORT>_IGNORE` | Ignore container/service when set to any non-empty value. |
 
 Any other `SERVICE_*` key is passed as lower-cased service metadata attribute (`Service.Attrs`) to adapters. Frequently used ones:
@@ -202,7 +202,7 @@ Any other `SERVICE_*` key is passed as lower-cased service metadata attribute (`
 | `SERVICE_CHECK_TCP`, `SERVICE_<PORT>_CHECK_TCP` | Consul | Enable TCP check. |
 | `SERVICE_CHECK_GRPC`, `SERVICE_<PORT>_CHECK_GRPC` | Consul | Enable gRPC check. |
 | `SERVICE_CHECK_SCRIPT`, `SERVICE_<PORT>_CHECK_SCRIPT` | Consul | Script command (supports `$SERVICE_IP` and `$SERVICE_PORT`). |
-| `SERVICE_CHECK_CMD`, `SERVICE_<PORT>_CHECK_CMD` | Consul | Docker health check bridge command. |
+| `SERVICE_CHECK_CMD`, `SERVICE_<PORT>_CHECK_CMD` | Consul | Docker health check bridge command (no interpolation). |
 | `SERVICE_CHECK_TTL`, `SERVICE_<PORT>_CHECK_TTL` | Consul | TTL check duration (ex: `30s`). |
 | `SERVICE_CHECK_INTERVAL`, `SERVICE_<PORT>_CHECK_INTERVAL` | Consul | Check interval (default `10s` for non-TTL checks). |
 | `SERVICE_CHECK_TIMEOUT`, `SERVICE_<PORT>_CHECK_TIMEOUT` | Consul | Check timeout. |
@@ -215,10 +215,12 @@ Any other `SERVICE_*` key is passed as lower-cased service metadata attribute (`
 
 Runtime label overrides also affect discovery resolution per service:
 
-- `service.name` (same effect as overriding `name`)
-- `service.discovery.mode`
-- `service.discovery.address`
-- `service.discovery.name`
+| Label | Effect |
+|---|---|
+| `service.name` | Overrides service name (same effect as `SERVICE_NAME`). |
+| `service.discovery.mode` | Overrides discovery mode for that service (`local`, `service`, etc.). |
+| `service.discovery.address` | Overrides discovery backend address for that service. |
+| `service.discovery.name` | Overrides discovery service name used in `service` mode. |
 
 ## Service ownership
 

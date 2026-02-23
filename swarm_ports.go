@@ -128,6 +128,10 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 	}
 	log.Printf("swarm manager fallback: querying manager Docker APIs for %s on port %d: %s", serviceID, r.managerAPIPort, strings.Join(managers, ","))
 	op := func() error {
+		managers = r.managerNodeAddrs()
+		if len(managers) == 0 {
+			return fmt.Errorf("no manager node address discovered")
+		}
 		for _, addr := range managers {
 			client, err := dockerapi.NewVersionedClient(fmt.Sprintf("tcp://%s:%d", addr, r.managerAPIPort), defaultDockerAPIVersion)
 			if err != nil {
@@ -140,6 +144,7 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 				log.Printf("swarm manager handshake: manager %s:%d reachable for service %s", addr, r.managerAPIPort, serviceID)
 				return nil
 			}
+			forgetManagerAddr(addr)
 			log.Printf("swarm manager fallback: manager inspect failed for %s via %s:%d: %v", serviceID, addr, r.managerAPIPort, err)
 		}
 		return fmt.Errorf("unable to inspect service %s from manager list (worker needs manager Docker API reachability on port %d)", serviceID, r.managerAPIPort)

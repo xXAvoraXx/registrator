@@ -197,6 +197,13 @@ func rememberManagerAddr(addr string) {
 	discoveredManagerAddrState.Store(addr, struct{}{})
 }
 
+func forgetManagerAddr(addr string) {
+	if addr == "" {
+		return
+	}
+	discoveredManagerAddrState.Delete(addr)
+}
+
 func discoveredManagerAddrs() []string {
 	addrs := make([]string, 0)
 	discoveredManagerAddrState.Range(func(key, _ interface{}) bool {

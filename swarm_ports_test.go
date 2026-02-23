@@ -85,6 +85,23 @@ func TestManagerAddrsFromNodesUsesManagerRoleWhenManagerStatusMissing(t *testing
 	}
 }
 
+func TestManagerAddrsFromInfoUsesRemoteManagers(t *testing.T) {
+	info := &dockerapi.DockerInfo{
+		Swarm: swarmapi.Info{
+			RemoteManagers: []swarmapi.Peer{
+				{Addr: "10.0.1.62:2377"},
+				{Addr: "10.0.1.63:2377"},
+				{Addr: "10.0.1.62:2377"},
+			},
+		},
+	}
+
+	addrs := managerAddrsFromInfo(info)
+	if len(addrs) != 2 || addrs[0] != "10.0.1.62" || addrs[1] != "10.0.1.63" {
+		t.Fatalf("expected manager addresses from remote managers, got %+v", addrs)
+	}
+}
+
 func TestInspectServiceWorkerLocalFirstThenManagerFallback(t *testing.T) {
 	var serviceCalls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

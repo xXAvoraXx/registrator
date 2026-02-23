@@ -168,11 +168,35 @@ func (r *swarmPortResolver) managerNodeAddrs() []string {
 			addrSet[addr] = struct{}{}
 		}
 	}
+	info, err := r.docker.Info()
+	if err == nil {
+		for _, addr := range managerAddrsFromInfo(info) {
+			addrSet[addr] = struct{}{}
+		}
+	}
 	for _, addr := range discoveredManagerAddrs() {
 		addrSet[addr] = struct{}{}
 	}
 	if len(addrSet) == 0 {
 		for _, addr := range r.managerAddrsFromTaskDNS() {
+			addrSet[addr] = struct{}{}
+		}
+	}
+	addrs := make([]string, 0, len(addrSet))
+	for addr := range addrSet {
+		addrs = append(addrs, addr)
+	}
+	sort.Strings(addrs)
+	return addrs
+}
+
+func managerAddrsFromInfo(info *dockerapi.DockerInfo) []string {
+	if info == nil {
+		return nil
+	}
+	addrSet := make(map[string]struct{})
+	for _, peer := range info.Swarm.RemoteManagers {
+		if addr := managerStatusAddr(peer.Addr); addr != "" {
 			addrSet[addr] = struct{}{}
 		}
 	}

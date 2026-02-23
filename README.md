@@ -177,6 +177,11 @@ Supported environment variables:
 | `CONSUL_CLIENT_CERT` | _(empty)_ | Client certificate file path used in `consul-tls` mode. |
 | `CONSUL_CLIENT_KEY` | _(empty)_ | Client private key file path used in `consul-tls` mode. |
 
+## Service ownership
+
+Registrator-managed service registrations always include the `registrator` tag.  
+Cleanup/dangling management only targets backend services that already carry the `registrator` tag.
+
 ## Installation / Kurulum
 
 ### Prerequisites

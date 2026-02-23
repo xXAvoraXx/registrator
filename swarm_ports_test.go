@@ -1,7 +1,13 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	swarmapi "github.com/docker/docker/api/types/swarm"
@@ -53,5 +59,105 @@ func TestServiceNetworksInfoUsesServiceVIPNetworks(t *testing.T) {
 	}
 	if networks[0].name != "app" || networks[0].ip != "10.0.1.20" {
 		t.Fatalf("expected app network info, got %+v", networks[0])
+	}
+}
+
+func TestManagerAddrsFromNodesUsesManagerRoleWhenManagerStatusMissing(t *testing.T) {
+	nodes := []swarmapi.Node{
+		{
+			Spec:   swarmapi.NodeSpec{Role: swarmapi.NodeRoleManager},
+			Status: swarmapi.NodeStatus{Addr: "10.0.1.10"},
+		},
+		{
+			Spec:   swarmapi.NodeSpec{Role: swarmapi.NodeRoleWorker},
+			Status: swarmapi.NodeStatus{Addr: "10.0.1.20"},
+		},
+	}
+
+	addrs := managerAddrsFromNodes(nodes)
+	if len(addrs) != 1 || addrs[0] != "10.0.1.10" {
+		t.Fatalf("expected manager address from manager role, got %+v", addrs)
+	}
+}
+
+func TestInspectServiceWorkerLocalFirstThenManagerFallback(t *testing.T) {
+	var serviceCalls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/version"):
+			_ = json.NewEncoder(w).Encode(map[string]string{"ApiVersion": "1.41"})
+		case strings.Contains(r.URL.Path, "/services/service-id"):
+			call := atomic.AddInt32(&serviceCalls, 1)
+			service := swarmapi.Service{
+				ID: "service-id",
+				Spec: swarmapi.ServiceSpec{
+					EndpointSpec: &swarmapi.EndpointSpec{},
+				},
+			}
+			if call > 1 {
+				service.Spec.EndpointSpec.Ports = []swarmapi.PortConfig{
+					{PublishedPort: 5432, TargetPort: 5432, Protocol: swarmapi.PortConfigProtocolTCP},
+				}
+			}
+			_ = json.NewEncoder(w).Encode(service)
+		case strings.Contains(r.URL.Path, "/nodes"):
+			nodes := []swarmapi.Node{
+				{
+					Spec:   swarmapi.NodeSpec{Role: swarmapi.NodeRoleManager},
+					Status: swarmapi.NodeStatus{Addr: "127.0.0.1"},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(nodes)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	u, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("failed to parse server URL: %v", err)
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatalf("failed to parse server port: %v", err)
+	}
+	docker, err := dockerapi.NewVersionedClient(server.URL, defaultDockerAPIVersion)
+	if err != nil {
+		t.Fatalf("failed to create docker client: %v", err)
+	}
+	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", port)
+
+	service, err := resolver.inspectService("service-id")
+	if err != nil {
+		t.Fatalf("expected manager fallback inspect success, got: %v", err)
+	}
+	if service.Spec.EndpointSpec == nil || len(service.Spec.EndpointSpec.Ports) != 1 {
+		t.Fatalf("expected manager fallback to return service with ports, got: %+v", service.Spec.EndpointSpec)
+	}
+	if got := atomic.LoadInt32(&serviceCalls); got != 2 {
+		t.Fatalf("expected local inspect then manager inspect (2 calls), got %d", got)
+	}
+}
+
+func TestServiceHasPublishedPorts(t *testing.T) {
+	if serviceHasPublishedPorts(nil) {
+		t.Fatalf("expected nil service to return false")
+	}
+	if !serviceHasPublishedPorts(&swarmapi.Service{
+		Spec: swarmapi.ServiceSpec{
+			EndpointSpec: &swarmapi.EndpointSpec{
+				Ports: []swarmapi.PortConfig{{PublishedPort: 80, TargetPort: 8080}},
+			},
+		},
+	}) {
+		t.Fatalf("expected ports in Spec.EndpointSpec to return true")
+	}
+	if !serviceHasPublishedPorts(&swarmapi.Service{
+		Endpoint: swarmapi.Endpoint{
+			Ports: []swarmapi.PortConfig{{PublishedPort: 443, TargetPort: 8443}},
+		},
+	}) {
+		t.Fatalf("expected ports in Endpoint to return true")
 	}
 }

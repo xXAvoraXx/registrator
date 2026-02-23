@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"os"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -92,13 +93,19 @@ func main() {
 	attempt := 0
 	retryAttempts := cfg.Runtime.RetryAttempts
 	retryInterval := cfg.Runtime.RetryIntervalMs
+	retryTotal := "infinite"
+	if retryAttempts >= 0 {
+		retryTotal = strconv.Itoa(retryAttempts + 1)
+	}
 	for retryAttempts == -1 || attempt <= retryAttempts {
-		log.Printf("Connecting to backend (%v/%v)", attempt, retryAttempts)
+		log.Printf("Connecting to backend (%v/%v)", attempt+1, retryTotal)
 
 		err = b.Ping()
 		if err == nil {
+			log.Printf("Connected to backend (%v/%v)", attempt+1, retryTotal)
 			break
 		}
+		log.Printf("Backend ping failed (%v/%v): %v", attempt+1, retryTotal, err)
 
 		if err != nil && attempt == retryAttempts {
 			assert(err)

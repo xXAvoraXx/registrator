@@ -122,7 +122,14 @@ func (b *Bridge) Sync(quiet bool) {
 
 	extServices, err := b.registry.Services()
 	if err == nil {
-		b.seedServiceHashes(extServices)
+		managedServices := make([]*Service, 0, len(extServices))
+		for _, extService := range extServices {
+			if !isRegistratorManagedService(extService) {
+				continue
+			}
+			managedServices = append(managedServices, extService)
+		}
+		b.seedServiceHashes(managedServices)
 	} else {
 		log.Println("unable to list backend services during sync:", err)
 	}
@@ -167,6 +174,7 @@ func (b *Bridge) Sync(quiet bool) {
 			log.Println("error listing nonExitedContainers, skipping sync", err)
 			return
 		}
+		runningContainerIPs := b.runningContainerIPs(nonExitedContainers)
 		for listingId := range b.services {
 			found := false
 			for _, container := range nonExitedContainers {
@@ -179,6 +187,17 @@ func (b *Bridge) Sync(quiet bool) {
 			if !found {
 				log.Printf("stale: Removing service %s because it does not exist", listingId)
 				go b.RemoveOnExit(listingId)
+				continue
+			}
+			container, inspectErr := b.docker.InspectContainer(listingId)
+			if inspectErr != nil {
+				log.Printf("stale: Removing service %s because Docker inspect failed during cleanup: %v", listingId, inspectErr)
+				go b.Remove(listingId)
+				continue
+			}
+			if reason := cleanupUnhealthyReason(container); reason != "" {
+				log.Printf("stale: Removing service %s because %s", listingId, reason)
+				go b.Remove(listingId)
 			}
 		}
 
@@ -194,7 +213,14 @@ func (b *Bridge) Sync(quiet bool) {
 				preferredIDs[service.ID] = struct{}{}
 			}
 		}
-		duplicateIDs := duplicateServiceIDs(extServices, preferredIDs)
+		managedExtServices := make([]*Service, 0, len(extServices))
+		for _, extService := range extServices {
+			if !isRegistratorManagedService(extService) {
+				continue
+			}
+			managedExtServices = append(managedExtServices, extService)
+		}
+		duplicateIDs := duplicateServiceIDs(managedExtServices, preferredIDs)
 		duplicateSet := make(map[string]struct{}, len(duplicateIDs))
 		if len(duplicateIDs) > 0 {
 			for _, duplicateID := range duplicateIDs {
@@ -216,6 +242,9 @@ func (b *Bridge) Sync(quiet bool) {
 
 	Outer:
 		for _, extService := range extServices {
+			if !isRegistratorManagedService(extService) {
+				continue
+			}
 			if _, duplicate := duplicateSet[extService.ID]; duplicate {
 				continue
 			}
@@ -230,12 +259,34 @@ func (b *Bridge) Sync(quiet bool) {
 				continue
 			}
 			serviceContainerName := matches[2]
+			matchedLocalService := false
+			staleAddress := false
 			for _, listing := range b.services {
 				for _, service := range listing {
-					if service.Name == extService.Name && serviceContainerName == service.Origin.container.Name[1:] {
-						continue Outer
+					// Defensive guard: keep cleanup resilient if a transient nil slot appears.
+					if service == nil {
+						continue
+					}
+					containerName := ""
+					if service.Origin.container != nil {
+						containerName = strings.TrimPrefix(service.Origin.container.Name, "/")
+					}
+					if service.Name == extService.Name && serviceContainerName == containerName {
+						matchedLocalService = true
+						// Empty backend IP cannot be validated against Docker networks; keep existing dangling rules.
+						if extService.IP != "" && !isIPKnownInDockerNetworks(extService.IP, runningContainerIPs) {
+							staleAddress = true
+							log.Printf("dangling: %s stale address %s is not present in running Docker container networks", extService.ID, extService.IP)
+						}
+						break
 					}
 				}
+				if matchedLocalService {
+					break
+				}
+			}
+			if matchedLocalService && !staleAddress {
+				continue Outer
 			}
 			log.Println("dangling:", extService.ID)
 			err := b.registry.Deregister(extService)
@@ -802,6 +853,7 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 	if len(port.NetworkNames) > 0 {
 		service.Tags = append(service.Tags, port.NetworkNames...)
 	}
+	service.Tags = ensureTag(service.Tags, registratorManagedTag)
 
 	id := mapDefault(metadata, "id", "")
 	if id != "" {
@@ -964,6 +1016,62 @@ func appendServiceIDNameSuffix(id, suffix string) string {
 		return id
 	}
 	return baseID[:lastColon] + suffix + baseID[lastColon:] + udpSuffix
+}
+
+func cleanupUnhealthyReason(container *dockerapi.Container) string {
+	if container == nil {
+		return "container state unavailable"
+	}
+	if !container.State.Running {
+		return "container not running"
+	}
+	if status := container.State.Health.Status; status == "unhealthy" {
+		return "container health is unhealthy"
+	}
+	return ""
+}
+
+func (b *Bridge) runningContainerIPs(listings []dockerapi.APIContainers) map[string]struct{} {
+	ips := make(map[string]struct{})
+	for _, listing := range listings {
+		foundInListing := false
+		for _, network := range listing.Networks.Networks {
+			if network.IPAddress == "" {
+				continue
+			}
+			ips[network.IPAddress] = struct{}{}
+			foundInListing = true
+		}
+		if foundInListing {
+			continue
+		}
+		container, err := b.docker.InspectContainer(listing.ID)
+		if err != nil {
+			continue
+		}
+		collectContainerIPs(container, ips)
+	}
+	return ips
+}
+
+func collectContainerIPs(container *dockerapi.Container, ips map[string]struct{}) {
+	if container == nil || container.NetworkSettings == nil {
+		return
+	}
+	if container.NetworkSettings.IPAddress != "" {
+		ips[container.NetworkSettings.IPAddress] = struct{}{}
+	}
+	for _, network := range container.NetworkSettings.Networks {
+		if network.IPAddress == "" {
+			continue
+		}
+		ips[network.IPAddress] = struct{}{}
+	}
+}
+
+func isIPKnownInDockerNetworks(ip string, ips map[string]struct{}) bool {
+	_, ok := ips[ip]
+	return ok
 }
 
 // bit set on ExitCode if it represents an exit via a signal

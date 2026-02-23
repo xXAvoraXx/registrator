@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"sort"
 	"strings"
@@ -107,28 +108,52 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 	if r.runtime.Role == "manager" {
 		return r.docker.InspectService(serviceID)
 	}
+	service, err := r.docker.InspectService(serviceID)
+	if err == nil && serviceHasPublishedPorts(service) {
+		return service, nil
+	}
+	if err != nil {
+		log.Printf("swarm manager fallback: local service inspect failed for %s: %v", serviceID, err)
+	} else {
+		log.Printf("swarm manager fallback: local service inspect for %s has no published ports, querying managers", serviceID)
+	}
 	managers := r.managerNodeAddrs()
 	if len(managers) == 0 {
-		return nil, fmt.Errorf("unable to inspect service %s from manager list: no manager node address discovered (check swarm manager availability and Docker API access)", serviceID)
+		if err != nil {
+			return nil, fmt.Errorf("unable to inspect service %s locally (%v) and from manager list: no manager node address discovered (check swarm manager availability and Docker API access)", serviceID, err)
+		}
+		return nil, fmt.Errorf("unable to inspect service %s: local inspection returned no published ports and no manager node address discovered (check swarm manager availability and Docker API access)", serviceID)
 	}
-	var service *swarmapi.Service
+	log.Printf("swarm manager fallback: querying manager Docker APIs for %s on port %d: %s", serviceID, r.managerAPIPort, strings.Join(managers, ","))
 	op := func() error {
 		for _, addr := range managers {
 			client, err := dockerapi.NewVersionedClient(fmt.Sprintf("tcp://%s:%d", addr, r.managerAPIPort), defaultDockerAPIVersion)
 			if err != nil {
+				log.Printf("swarm manager fallback: client init failed for manager %s service %s: %v", addr, serviceID, err)
 				continue
 			}
 			service, err = client.InspectService(serviceID)
 			if err == nil {
 				return nil
 			}
+			log.Printf("swarm manager fallback: manager inspect failed for %s via %s:%d: %v", serviceID, addr, r.managerAPIPort, err)
 		}
 		return fmt.Errorf("unable to inspect service %s from manager list (worker needs manager Docker API reachability on port %d)", serviceID, r.managerAPIPort)
 	}
 	exp := backoff.NewExponentialBackOff()
 	exp.MaxElapsedTime = managerRetryTimeout
-	err := backoff.Retry(op, exp)
-	return service, err
+	retryErr := backoff.Retry(op, exp)
+	return service, retryErr
+}
+
+func serviceHasPublishedPorts(service *swarmapi.Service) bool {
+	if service == nil {
+		return false
+	}
+	if service.Spec.EndpointSpec != nil && len(service.Spec.EndpointSpec.Ports) > 0 {
+		return true
+	}
+	return len(service.Endpoint.Ports) > 0
 }
 
 func (r *swarmPortResolver) managerNodeAddrs() []string {
@@ -136,16 +161,22 @@ func (r *swarmPortResolver) managerNodeAddrs() []string {
 	if err != nil {
 		return nil
 	}
+	return managerAddrsFromNodes(nodes)
+}
+
+func managerAddrsFromNodes(nodes []swarmapi.Node) []string {
 	addrSet := make(map[string]struct{})
 	for _, node := range nodes {
-		if node.ManagerStatus == nil {
+		if node.ManagerStatus == nil && node.Spec.Role != swarmapi.NodeRoleManager {
 			continue
 		}
 		if node.Status.Addr != "" {
 			addrSet[node.Status.Addr] = struct{}{}
 		}
-		if mgrAddr := managerStatusAddr(node.ManagerStatus.Addr); mgrAddr != "" {
-			addrSet[mgrAddr] = struct{}{}
+		if node.ManagerStatus != nil {
+			if mgrAddr := managerStatusAddr(node.ManagerStatus.Addr); mgrAddr != "" {
+				addrSet[mgrAddr] = struct{}{}
+			}
 		}
 	}
 	addrs := make([]string, 0, len(addrSet))

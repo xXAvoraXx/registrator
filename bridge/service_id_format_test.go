@@ -89,7 +89,7 @@ func TestSwarmUsesMachineHostnameInServiceID(t *testing.T) {
 
 	assert.NotNil(t, service)
 	assert.Equal(t, "worker-hostname:svc.1.taskid:5432", service.ID)
-	assert.ElementsMatch(t, []string{"app-net", "ingress"}, service.Tags)
+	assert.ElementsMatch(t, []string{"app-net", "ingress", "registrator"}, service.Tags)
 }
 
 func TestSwarmUsesLocalEngineHostnameWhenContainerNodeNameMissing(t *testing.T) {
@@ -154,7 +154,7 @@ func TestSwarmNetworkSpecificServiceNameAndID(t *testing.T) {
 	assert.NotNil(t, service)
 	assert.Equal(t, "registrator.dokploy-network.2375", service.Name)
 	assert.True(t, strings.Contains(service.ID, ":registrator.1.taskid.dokploy-network:2375"))
-	assert.ElementsMatch(t, []string{"dokploy-network"}, service.Tags)
+	assert.ElementsMatch(t, []string{"dokploy-network", "registrator"}, service.Tags)
 }
 
 func TestAppendServiceIDNameSuffix(t *testing.T) {

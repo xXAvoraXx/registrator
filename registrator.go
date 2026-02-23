@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"log"
+	"net"
 	"os"
 	"strconv"
 	"sync/atomic"
@@ -49,7 +50,7 @@ func main() {
 	assert(err)
 
 	swarmInfo := detectSwarmRuntime(docker)
-	resolver := newSwarmPortResolver(docker, swarmInfo, cfg.Runtime.AdvertiseMode, cfg.Runtime.AdvertiseIPOverride, cfg.Runtime.ManagerAPIPort)
+	resolver := newSwarmPortResolver(docker, swarmInfo, cfg.Runtime.AdvertiseMode, cfg.Runtime.AdvertiseIPOverride, cfg.Runtime.ManagerAPIPort, statusPort(cfg.Runtime.StatusAddr))
 	if cfg.Discovery.Provider == "consul" {
 		consul.ConfigureRuntime(docker, consul.RuntimeConfig{
 			Mode:             cfg.Discovery.Mode,
@@ -179,4 +180,15 @@ func main() {
 
 	close(quit)
 	log.Fatal("Docker event loop closed") // todo: reconnect?
+}
+
+func statusPort(addr string) string {
+	if addr == "" {
+		return ""
+	}
+	_, port, err := net.SplitHostPort(addr)
+	if err == nil {
+		return port
+	}
+	return ""
 }

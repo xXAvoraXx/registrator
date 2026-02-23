@@ -78,6 +78,7 @@ type peerInfo struct {
 	ServiceName string `json:"serviceName"`
 	TaskID      string `json:"taskId"`
 	NodeID      string `json:"nodeId"`
+	NodeAddr    string `json:"nodeAddr"`
 	Hostname    string `json:"hostname"`
 	OverlayIP   string `json:"overlayIP"`
 	Role        string `json:"role"`
@@ -92,6 +93,7 @@ func (s swarmRuntime) peerInfo() peerInfo {
 		ServiceName: s.SwarmServiceName,
 		TaskID:      s.SwarmTaskID,
 		NodeID:      s.NodeID,
+		NodeAddr:    s.NodeAddr,
 		Hostname:    s.Hostname,
 		OverlayIP:   s.OverlayIP,
 		Role:        s.Role,

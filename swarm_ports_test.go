@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -131,10 +132,10 @@ func TestInspectServiceWorkerLocalFirstThenManagerFallback(t *testing.T) {
 	}
 	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", port)
 	var buf bytes.Buffer
-	prevOut := log.Writer()
+	previousLogWriter := log.Writer()
 	log.SetOutput(&buf)
 	t.Cleanup(func() {
-		log.SetOutput(prevOut)
+		log.SetOutput(previousLogWriter)
 	})
 
 	service, err := resolver.inspectService("service-id")
@@ -148,10 +149,12 @@ func TestInspectServiceWorkerLocalFirstThenManagerFallback(t *testing.T) {
 		t.Fatalf("expected local inspect then manager inspect (2 calls), got %d", got)
 	}
 	logOutput := buf.String()
-	if !strings.Contains(logOutput, "swarm manager handshake: attempting manager") {
+	attemptLog := fmt.Sprintf("swarm manager handshake: attempting manager 127.0.0.1:%d for service service-id", port)
+	if !strings.Contains(logOutput, attemptLog) {
 		t.Fatalf("expected handshake attempt log, got: %s", logOutput)
 	}
-	if !strings.Contains(logOutput, "swarm manager handshake: manager") || !strings.Contains(logOutput, "reachable for service service-id") {
+	successLog := fmt.Sprintf("swarm manager handshake: manager 127.0.0.1:%d reachable for service service-id", port)
+	if !strings.Contains(logOutput, successLog) {
 		t.Fatalf("expected handshake success log, got: %s", logOutput)
 	}
 }

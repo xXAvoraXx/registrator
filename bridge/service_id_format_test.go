@@ -1,7 +1,6 @@
 package bridge
 
 import (
-	"strings"
 	"testing"
 
 	dockerapi "github.com/fsouza/go-dockerclient"
@@ -125,7 +124,7 @@ func TestSwarmUsesLocalEngineHostnameWhenContainerNodeNameMissing(t *testing.T) 
 	assert.NotContains(t, service.ID, "ephemeral-container-id")
 }
 
-func TestSwarmNetworkSpecificServiceNameAndID(t *testing.T) {
+func TestSwarmNetworkServiceNameAndIDStayStable(t *testing.T) {
 	previousHostname := Hostname
 	Hostname = "worker-hostname"
 	defer func() { Hostname = previousHostname }()
@@ -152,8 +151,8 @@ func TestSwarmNetworkSpecificServiceNameAndID(t *testing.T) {
 	}, true)
 
 	assert.NotNil(t, service)
-	assert.Equal(t, "registrator.dokploy-network.2375", service.Name)
-	assert.True(t, strings.Contains(service.ID, ":registrator.1.taskid.dokploy-network:2375"))
+	assert.Equal(t, "registrator-2375", service.Name)
+	assert.Equal(t, "worker-hostname:registrator.1.taskid:2375", service.ID)
 	assert.ElementsMatch(t, []string{"dokploy-network", "registrator"}, service.Tags)
 }
 

@@ -73,7 +73,13 @@ func ensureTag(tags []string, tag string) []string {
 }
 
 func isRegistratorManagedService(service *Service) bool {
-	return service != nil && hasTag(service.Tags, registratorManagedTag)
+	if service == nil {
+		return false
+	}
+	if hasTag(service.Tags, registratorManagedTag) {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(service.Name), "registrator") && strings.Contains(strings.ToLower(service.ID), ":registrator.")
 }
 
 func serviceMetaData(config *dockerapi.Config, port string) (map[string]string, map[string]bool) {

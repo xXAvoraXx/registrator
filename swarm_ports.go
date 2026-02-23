@@ -132,8 +132,10 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 				log.Printf("swarm manager fallback: client init failed for manager %s service %s: %v", addr, serviceID, err)
 				continue
 			}
+			log.Printf("swarm manager handshake: attempting manager %s:%d for service %s", addr, r.managerAPIPort, serviceID)
 			service, err = client.InspectService(serviceID)
 			if err == nil {
+				log.Printf("swarm manager handshake: manager %s:%d reachable for service %s", addr, r.managerAPIPort, serviceID)
 				return nil
 			}
 			log.Printf("swarm manager fallback: manager inspect failed for %s via %s:%d: %v", serviceID, addr, r.managerAPIPort, err)
@@ -157,11 +159,22 @@ func serviceHasPublishedPorts(service *swarmapi.Service) bool {
 }
 
 func (r *swarmPortResolver) managerNodeAddrs() []string {
+	addrSet := make(map[string]struct{})
 	nodes, err := r.docker.ListNodes(dockerapi.ListNodesOptions{})
-	if err != nil {
-		return nil
+	if err == nil {
+		for _, addr := range managerAddrsFromNodes(nodes) {
+			addrSet[addr] = struct{}{}
+		}
 	}
-	return managerAddrsFromNodes(nodes)
+	for _, addr := range discoveredManagerAddrs() {
+		addrSet[addr] = struct{}{}
+	}
+	addrs := make([]string, 0, len(addrSet))
+	for addr := range addrSet {
+		addrs = append(addrs, addr)
+	}
+	sort.Strings(addrs)
+	return addrs
 }
 
 func managerAddrsFromNodes(nodes []swarmapi.Node) []string {

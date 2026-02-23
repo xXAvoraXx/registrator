@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -83,6 +84,7 @@ type peerInfo struct {
 }
 
 var peerDiscoveryLogState sync.Map
+var discoveredManagerAddrState sync.Map
 
 func (s swarmRuntime) peerInfo() peerInfo {
 	return peerInfo{
@@ -177,11 +179,35 @@ func discoverPeers(peerHost, port, selfOverlayIP string, onPeerDiscovered func(p
 			continue
 		}
 		peerDiscoveryLogState.Store(key, signature)
+		if info.Role == "manager" {
+			rememberManagerAddr(info.OverlayIP)
+			rememberManagerAddr(peerIP)
+		}
 		if onPeerDiscovered != nil {
 			onPeerDiscovered(info)
 		}
 		log.Printf("discovered peer service=%s task=%s node=%s ip=%s role=%s", info.ServiceName, info.TaskID, info.NodeID, info.OverlayIP, info.Role)
 	}
+}
+
+func rememberManagerAddr(addr string) {
+	if addr == "" {
+		return
+	}
+	discoveredManagerAddrState.Store(addr, struct{}{})
+}
+
+func discoveredManagerAddrs() []string {
+	addrs := make([]string, 0)
+	discoveredManagerAddrState.Range(func(key, _ interface{}) bool {
+		addr, ok := key.(string)
+		if ok && addr != "" {
+			addrs = append(addrs, addr)
+		}
+		return true
+	})
+	sort.Strings(addrs)
+	return addrs
 }
 
 func logPeerDiscoveryState(key, message string) {

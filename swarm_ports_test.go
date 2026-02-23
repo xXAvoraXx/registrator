@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -127,6 +131,12 @@ func TestInspectServiceWorkerLocalFirstThenManagerFallback(t *testing.T) {
 		t.Fatalf("failed to create docker client: %v", err)
 	}
 	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", port)
+	var buf bytes.Buffer
+	previousLogWriter := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(previousLogWriter)
+	})
 
 	service, err := resolver.inspectService("service-id")
 	if err != nil {
@@ -137,6 +147,15 @@ func TestInspectServiceWorkerLocalFirstThenManagerFallback(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&serviceCalls); got != 2 {
 		t.Fatalf("expected local inspect then manager inspect (2 calls), got %d", got)
+	}
+	logOutput := buf.String()
+	attemptLog := fmt.Sprintf("swarm manager handshake: attempting manager 127.0.0.1:%d for service service-id", port)
+	if !strings.Contains(logOutput, attemptLog) {
+		t.Fatalf("expected handshake attempt log, got: %s", logOutput)
+	}
+	successLog := fmt.Sprintf("swarm manager handshake: manager 127.0.0.1:%d reachable for service service-id", port)
+	if !strings.Contains(logOutput, successLog) {
+		t.Fatalf("expected handshake success log, got: %s", logOutput)
 	}
 }
 
@@ -159,5 +178,24 @@ func TestServiceHasPublishedPorts(t *testing.T) {
 		},
 	}) {
 		t.Fatalf("expected ports in Endpoint to return true")
+	}
+}
+
+func TestManagerNodeAddrsFallsBackToDiscoveredPeers(t *testing.T) {
+	previousManagers := discoveredManagerAddrState
+	discoveredManagerAddrState = sync.Map{}
+	t.Cleanup(func() {
+		discoveredManagerAddrState = previousManagers
+	})
+	rememberManagerAddr("10.0.1.44")
+
+	docker, err := dockerapi.NewClient("unix:///tmp/registrator-missing-docker.sock")
+	if err != nil {
+		t.Fatalf("failed to create docker client: %v", err)
+	}
+	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", 2375)
+	addrs := resolver.managerNodeAddrs()
+	if len(addrs) != 1 || addrs[0] != "10.0.1.44" {
+		t.Fatalf("expected discovered manager address fallback, got %+v", addrs)
 	}
 }

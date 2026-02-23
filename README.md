@@ -273,17 +273,11 @@ This communication path is worker -> Docker manager API (`runtime.managerAPIPort
 Troubleshooting:
 
 - If workers cannot resolve swarm service ports, verify manager Docker API reachability on `runtime.managerAPIPort` (default `2375`).
-- Publishing `2375` as an ingress port on the registrator service is not what this lookup uses; workers connect directly to manager node addresses from `docker node ls` metadata.
+- Publishing `2375` as an ingress port on the registrator service is not what this lookup uses; workers connect directly to manager node addresses discovered via Docker node metadata and manager peer discovery.
 
-### Swarm multi-network service registration
+### Swarm service registration stability
 
-When a Swarm service is attached to multiple networks and publishes ports, Registrator now creates:
-
-- **network-qualified service instances** per network+port  
-  Example: `registrator.dokploy-network.2375`, `registrator.ingress.8080`
-- **aggregate base-name instances** that keep the original service name (`registrator`) while storing one instance per network/IP.
-
-Each generated instance carries only its own network tag (instead of a combined network tag list), so network-scoped discovery and filtering stay consistent.
+For Swarm-resolved ports, Registrator now keeps one registration per exposed port (without network-qualified duplicate IDs/names), while still attaching network names as tags for filtering.
 
 ## Failure handling model
 

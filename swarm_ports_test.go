@@ -102,6 +102,13 @@ func TestManagerAddrsFromInfoUsesRemoteManagers(t *testing.T) {
 	}
 }
 
+func TestManagerAddrsFromInfoHandlesEmptyRemoteManagers(t *testing.T) {
+	addrs := managerAddrsFromInfo(&dockerapi.DockerInfo{})
+	if len(addrs) != 0 {
+		t.Fatalf("expected no manager addresses for empty remote managers, got %+v", addrs)
+	}
+}
+
 func TestInspectServiceWorkerLocalFirstThenManagerFallback(t *testing.T) {
 	var serviceCalls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

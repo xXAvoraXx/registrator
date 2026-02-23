@@ -181,9 +181,7 @@ func discoverPeers(peerHost, port, selfOverlayIP string, onPeerDiscovered func(p
 		peerDiscoveryLogState.Store(key, signature)
 		if info.Role == "manager" {
 			rememberManagerAddr(info.OverlayIP)
-			if info.OverlayIP == "" {
-				rememberManagerAddr(peerIP)
-			}
+			rememberManagerAddr(peerIP)
 		}
 		if onPeerDiscovered != nil {
 			onPeerDiscovered(info)

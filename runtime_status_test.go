@@ -118,7 +118,11 @@ func TestDiscoverPeersCallsCallbackOncePerPeerSignature(t *testing.T) {
 	if got := atomic.LoadInt32(&callbackCalls); got != 1 {
 		t.Fatalf("expected callback to run once for identical manager signature, got %d", got)
 	}
-	if addrs := discoveredManagerAddrs(); len(addrs) != 1 || addrs[0] != "10.0.1.172" {
-		t.Fatalf("expected discovered manager address to be recorded, got %+v", addrs)
+	addrs := discoveredManagerAddrs()
+	if len(addrs) != 2 {
+		t.Fatalf("expected overlay and peer manager addresses to be recorded, got %+v", addrs)
+	}
+	if !(addrs[0] == "10.0.1.172" || addrs[1] == "10.0.1.172") || !(addrs[0] == host || addrs[1] == host) {
+		t.Fatalf("unexpected discovered manager addresses: %+v", addrs)
 	}
 }

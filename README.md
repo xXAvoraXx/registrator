@@ -273,7 +273,7 @@ This communication path is worker -> Docker manager API (`runtime.managerAPIPort
 Troubleshooting:
 
 - If workers cannot resolve swarm service ports, verify manager Docker API reachability on `runtime.managerAPIPort` (default `2375`).
-- Publishing `2375` as an ingress port on the registrator service is not what this lookup uses; workers connect directly to manager node addresses from `docker node ls` metadata.
+- Publishing `2375` as an ingress port on the registrator service is not what this lookup uses; workers connect directly to manager node addresses discovered via Docker node metadata and manager peer discovery.
 
 ### Swarm multi-network service registration
 

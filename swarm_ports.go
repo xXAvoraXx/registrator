@@ -157,11 +157,22 @@ func serviceHasPublishedPorts(service *swarmapi.Service) bool {
 }
 
 func (r *swarmPortResolver) managerNodeAddrs() []string {
+	addrSet := make(map[string]struct{})
 	nodes, err := r.docker.ListNodes(dockerapi.ListNodesOptions{})
-	if err != nil {
-		return nil
+	if err == nil {
+		for _, addr := range managerAddrsFromNodes(nodes) {
+			addrSet[addr] = struct{}{}
+		}
 	}
-	return managerAddrsFromNodes(nodes)
+	for _, addr := range discoveredManagerAddrs() {
+		addrSet[addr] = struct{}{}
+	}
+	addrs := make([]string, 0, len(addrSet))
+	for addr := range addrSet {
+		addrs = append(addrs, addr)
+	}
+	sort.Strings(addrs)
+	return addrs
 }
 
 func managerAddrsFromNodes(nodes []swarmapi.Node) []string {

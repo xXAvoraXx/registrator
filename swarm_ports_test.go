@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -159,5 +160,24 @@ func TestServiceHasPublishedPorts(t *testing.T) {
 		},
 	}) {
 		t.Fatalf("expected ports in Endpoint to return true")
+	}
+}
+
+func TestManagerNodeAddrsFallsBackToDiscoveredPeers(t *testing.T) {
+	previousManagers := discoveredManagerAddrState
+	discoveredManagerAddrState = sync.Map{}
+	t.Cleanup(func() {
+		discoveredManagerAddrState = previousManagers
+	})
+	rememberManagerAddr("10.0.1.44")
+
+	docker, err := dockerapi.NewClient("unix:///tmp/registrator-missing-docker.sock")
+	if err != nil {
+		t.Fatalf("failed to create docker client: %v", err)
+	}
+	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", 2375)
+	addrs := resolver.managerNodeAddrs()
+	if len(addrs) != 1 || addrs[0] != "10.0.1.44" {
+		t.Fatalf("expected discovered manager address fallback, got %+v", addrs)
 	}
 }

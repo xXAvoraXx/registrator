@@ -67,6 +67,33 @@ func TestServiceNetworksInfoUsesServiceVIPNetworks(t *testing.T) {
 	}
 }
 
+func TestServiceNetworksInfoSkipsIngressNetwork(t *testing.T) {
+	container := &dockerapi.Container{
+		NetworkSettings: &dockerapi.NetworkSettings{
+			Networks: map[string]dockerapi.ContainerNetwork{
+				"ingress": {IPAddress: "10.0.9.10", NetworkID: "ingress-id"},
+				"app":     {IPAddress: "10.0.1.20", NetworkID: "app-id"},
+			},
+		},
+	}
+	service := &swarmapi.Service{
+		Endpoint: swarmapi.Endpoint{
+			VirtualIPs: []swarmapi.EndpointVirtualIP{
+				{Addr: "10.0.9.2/24", NetworkID: "ingress-id"},
+				{Addr: "10.0.1.2/24", NetworkID: "app-id"},
+			},
+		},
+	}
+
+	networks := serviceNetworksInfo(container, service)
+	if len(networks) != 1 {
+		t.Fatalf("expected one network result, got %v", networks)
+	}
+	if networks[0].name != "app" || networks[0].ip != "10.0.1.20" {
+		t.Fatalf("expected app network info, got %+v", networks[0])
+	}
+}
+
 func TestResolveSwarmPortsUsesSelectedNetworkIPForExposedIP(t *testing.T) {
 	serviceID := "service-id"
 	dockerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

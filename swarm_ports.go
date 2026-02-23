@@ -313,6 +313,9 @@ func serviceNetworksInfo(container *dockerapi.Container, service *swarmapi.Servi
 	names := make([]string, 0, len(container.NetworkSettings.Networks))
 	ips := make(map[string]string, len(container.NetworkSettings.Networks))
 	for name, network := range container.NetworkSettings.Networks {
+		if strings.EqualFold(name, "ingress") {
+			continue
+		}
 		if network.IPAddress == "" {
 			continue
 		}

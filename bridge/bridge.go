@@ -417,7 +417,8 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 		port.HostIP = b.config.HostIp
 	}
 
-	metadata, _ := serviceMetaData(container.Config, port.ExposedPort)
+	metadata, metadataFromPort := serviceMetaData(container.Config, port.ExposedPort)
+	_ = metadataFromPort // service names are no longer port-suffixed by exposed port
 	runtimeLabels := make(map[string]string)
 	for k, v := range container.Config.Labels {
 		runtimeLabels[k] = v

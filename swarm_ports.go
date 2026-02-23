@@ -190,6 +190,7 @@ func (r *swarmPortResolver) managerAddrsFromTaskDNS() []string {
 	}
 	ips, err := lookupIP("tasks." + r.runtime.SwarmServiceName)
 	if err != nil {
+		log.Printf("swarm manager fallback: task DNS lookup failed for tasks.%s: %v", r.runtime.SwarmServiceName, err)
 		return nil
 	}
 	addrSet := make(map[string]struct{})

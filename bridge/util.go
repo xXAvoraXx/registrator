@@ -165,6 +165,7 @@ func servicePort(container *dockerapi.Container, port dockerapi.Port, published 
 	}
 }
 
+// defaultHTTPCheckPort returns the lowest exposed TCP port for the container, or "" when none are found.
 func defaultHTTPCheckPort(container *dockerapi.Container) string {
 	if container == nil {
 		return ""

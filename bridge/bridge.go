@@ -432,12 +432,14 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 		}
 	}
 	metadata = applyRuntimeOverrides(metadata, runtimeLabels)
-	if metadata["check_http"] != "" && metadata["check_http_port"] == "" && !metadataFromPort["check_http"] {
+	genericHTTPCheck := metadata["check_http"] != "" && metadata["check_http_port"] == "" && !metadataFromPort["check_http"]
+	if genericHTTPCheck {
 		if checkPort := defaultHTTPCheckPort(container); checkPort != "" {
 			metadata["check_http_port"] = checkPort
 		}
 	}
-	if metadata["check_https"] != "" && metadata["check_https_port"] == "" && !metadataFromPort["check_https"] {
+	genericHTTPSCheck := metadata["check_https"] != "" && metadata["check_https_port"] == "" && !metadataFromPort["check_https"]
+	if genericHTTPSCheck {
 		if checkPort := defaultHTTPCheckPort(container); checkPort != "" {
 			metadata["check_https_port"] = checkPort
 		}

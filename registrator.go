@@ -129,16 +129,7 @@ func main() {
 	quit := make(chan struct{})
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-
-	go func() {
-		<-signals
-		log.Println("shutdown signal received, deregistering services ...")
-		b.DeregisterAll()
-		if err := docker.RemoveEventListener(events); err != nil {
-			log.Println("failed to remove docker event listener:", err)
-		}
-		os.Exit(0)
-	}()
+	defer signal.Stop(signals)
 
 	// Start the TTL refresh timer
 	refreshInterval := cfg.Runtime.RefreshInterval
@@ -176,24 +167,36 @@ func main() {
 	}
 
 	// Process Docker events
-	for msg := range events {
-		atomic.AddUint64(&eventsProcessed, 1)
-		switch msg.Status {
-		case "start":
-			go b.Add(msg.ID)
-		case "die":
-			go b.RemoveOnExit(msg.ID)
-		case "stop", "pause", "destroy":
-			go b.Remove(msg.ID)
-		case "unpause", "health_status: healthy", "health_status:healthy":
-			go b.Add(msg.ID)
-		case "health_status: unhealthy", "health_status:unhealthy":
-			go b.RemoveOnExit(msg.ID)
+	for {
+		select {
+		case <-signals:
+			log.Println("shutdown signal received, deregistering services ...")
+			close(quit)
+			b.DeregisterAll()
+			if err := docker.RemoveEventListener(events); err != nil {
+				log.Println("failed to remove docker event listener:", err)
+			}
+			return
+		case msg, ok := <-events:
+			if !ok {
+				close(quit)
+				log.Fatal("Docker event stream unexpectedly closed") // todo: reconnect?
+			}
+			atomic.AddUint64(&eventsProcessed, 1)
+			switch msg.Status {
+			case "start":
+				go b.Add(msg.ID)
+			case "die":
+				go b.RemoveOnExit(msg.ID)
+			case "stop", "pause", "destroy":
+				go b.Remove(msg.ID)
+			case "unpause", "health_status: healthy", "health_status:healthy":
+				go b.Add(msg.ID)
+			case "health_status: unhealthy", "health_status:unhealthy":
+				go b.RemoveOnExit(msg.ID)
+			}
 		}
 	}
-
-	close(quit)
-	log.Fatal("Docker event loop closed") // todo: reconnect?
 }
 
 func statusPort(addr string) string {

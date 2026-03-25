@@ -126,7 +126,7 @@ func servicePort(container *dockerapi.Container, port dockerapi.Port, published 
 	// For container-scoped network modes (including overlay/custom), prefer the network IP.
 	// Keep host/default/bridge untouched to preserve published host bindings.
 	nm = container.HostConfig.NetworkMode
-	if hp == "" && nm != "" && nm != "bridge" && nm != "default" && nm != "host" && !strings.HasPrefix(nm, "container:") {
+	if hip == "0.0.0.0" && hp == "" && nm != "" && nm != "bridge" && nm != "default" && nm != "host" && !strings.HasPrefix(nm, "container:") {
 		if network, ok := container.NetworkSettings.Networks[nm]; ok && network.IPAddress != "" {
 			hip = network.IPAddress
 		}

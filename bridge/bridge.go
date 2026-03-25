@@ -106,6 +106,7 @@ func (b *Bridge) DeregisterAll() {
 	}
 	b.services = make(map[string][]*Service)
 	b.deadContainers = make(map[string]*DeadContainer)
+	b.serviceHashes = make(map[string]string)
 }
 
 func (b *Bridge) Refresh() {
@@ -321,7 +322,7 @@ func (b *Bridge) add(containerId string, quiet bool) {
 
 	existingServices := b.services[containerId]
 	if existingServices != nil {
-		log.Println("container, ", containerId[:12], ", already exists, rebuilding")
+		log.Println("container, ", containerId[:12], ", already exists, reconciling")
 	}
 
 	container, err := b.docker.InspectContainer(containerId)

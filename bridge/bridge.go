@@ -82,33 +82,6 @@ func (b *Bridge) RemoveOnExit(containerId string) {
 	b.remove(containerId, b.shouldRemove(containerId))
 }
 
-func (b *Bridge) DeregisterAll() {
-	b.Lock()
-	defer b.Unlock()
-
-	for containerID, services := range b.services {
-		for _, service := range services {
-			if err := b.deregisterService(service); err != nil {
-				log.Println("deregister failed:", service.ID, err)
-				continue
-			}
-			log.Println("removed:", containerID[:12], service.ID)
-		}
-	}
-	for containerID, deadContainer := range b.deadContainers {
-		for _, service := range deadContainer.Services {
-			if err := b.deregisterService(service); err != nil {
-				log.Println("deregister failed:", service.ID, err)
-				continue
-			}
-			log.Println("removed:", containerID[:12], service.ID)
-		}
-	}
-	b.services = make(map[string][]*Service)
-	b.deadContainers = make(map[string]*DeadContainer)
-	b.serviceHashes = make(map[string]string)
-}
-
 func (b *Bridge) Refresh() {
 	b.Lock()
 	defer b.Unlock()
@@ -320,9 +293,9 @@ func (b *Bridge) add(containerId string, quiet bool) {
 		delete(b.deadContainers, containerId)
 	}
 
-	existingServices := b.services[containerId]
-	if existingServices != nil {
-		log.Println("container, ", containerId[:12], ", already exists, reconciling")
+	if b.services[containerId] != nil {
+		log.Println("container, ", containerId[:12], ", already exists, rebuilding")
+		delete(b.services, containerId)
 	}
 
 	container, err := b.docker.InspectContainer(containerId)
@@ -332,8 +305,6 @@ func (b *Bridge) add(containerId string, quiet bool) {
 	}
 	if !b.ownsContainer(container) {
 		log.Println("ignored:", container.ID[:12], "container not on local node")
-		b.reconcileContainerServices(container.ID, existingServices, nil)
-		delete(b.services, container.ID)
 		return
 	}
 
@@ -370,8 +341,6 @@ func (b *Bridge) add(containerId string, quiet bool) {
 
 	if len(ports) == 0 && !quiet {
 		log.Println("ignored:", container.ID[:12], "no published ports")
-		b.reconcileContainerServices(container.ID, existingServices, nil)
-		delete(b.services, container.ID)
 		return
 	}
 
@@ -392,7 +361,6 @@ func (b *Bridge) add(containerId string, quiet bool) {
 		portKey := fmt.Sprintf("%s/%s", port.ExposedPort, port.PortType)
 		portRegistrations[portKey]++
 	}
-	registeredServices := make([]*Service, 0, len(servicePorts))
 	for _, port := range servicePorts {
 		service := b.newService(port, isGroup)
 		if service == nil {
@@ -410,15 +378,9 @@ func (b *Bridge) add(containerId string, quiet bool) {
 			log.Println("register failed:", service, err)
 			continue
 		}
-		registeredServices = append(registeredServices, service)
+		b.services[container.ID] = append(b.services[container.ID], service)
 		log.Println("added:", container.ID[:12], service.ID)
 	}
-	if len(registeredServices) == 0 {
-		delete(b.services, container.ID)
-	} else {
-		b.services[container.ID] = registeredServices
-	}
-	b.reconcileContainerServices(container.ID, existingServices, registeredServices)
 }
 
 func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
@@ -917,27 +879,6 @@ func (b *Bridge) remove(containerId string, deregister bool) {
 		b.deadContainers[containerId] = &DeadContainer{b.config.RefreshTtl, b.services[containerId]}
 	}
 	delete(b.services, containerId)
-}
-
-func (b *Bridge) reconcileContainerServices(containerId string, oldServices, newServices []*Service) {
-	if len(oldServices) == 0 {
-		return
-	}
-	newByID := make(map[string]struct{}, len(newServices))
-	for _, service := range newServices {
-		newByID[service.ID] = struct{}{}
-	}
-	for _, service := range oldServices {
-		if _, ok := newByID[service.ID]; ok {
-			continue
-		}
-		err := b.deregisterService(service)
-		if err != nil {
-			log.Println("deregister failed:", service.ID, err)
-			continue
-		}
-		log.Println("removed:", containerId[:12], service.ID)
-	}
 }
 
 func (b *Bridge) registerService(service *Service) error {

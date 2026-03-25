@@ -33,7 +33,7 @@ func TestAddDoesNotReuseDeadContainerCachedServices(t *testing.T) {
 	assert.Nil(t, b.deadContainers[testContainerID])
 }
 
-func TestAddKeepsCachedServicesWhenReinspectFails(t *testing.T) {
+func TestAddRebuildsWhenContainerAlreadyCached(t *testing.T) {
 	stale := &Service{ID: "svc-1", Name: "svc", IP: "10.0.0.10", Port: 8080}
 	b := &Bridge{
 		docker:         newUnreachableDockerClient(t),
@@ -44,5 +44,5 @@ func TestAddKeepsCachedServicesWhenReinspectFails(t *testing.T) {
 
 	b.add(testContainerID, true)
 
-	assert.Equal(t, []*Service{stale}, b.services[testContainerID])
+	assert.Nil(t, b.services[testContainerID])
 }

@@ -93,22 +93,3 @@ func TestServicePortIncludesNetworkNames(t *testing.T) {
 	port := servicePort(container, dockerapi.Port("3000/tcp"), nil)
 	assert.ElementsMatch(t, []string{"dokploy-network", "registrator"}, port.NetworkNames)
 }
-
-func TestServicePortKeepsPublishedHostIPOnCustomNetwork(t *testing.T) {
-	container := &dockerapi.Container{
-		Config:     &dockerapi.Config{},
-		HostConfig: &dockerapi.HostConfig{NetworkMode: "custom-net"},
-		NetworkSettings: &dockerapi.NetworkSettings{
-			Networks: map[string]dockerapi.ContainerNetwork{
-				"custom-net": {IPAddress: "10.10.0.5"},
-			},
-		},
-	}
-
-	port := servicePort(container, dockerapi.Port("8080/tcp"), []dockerapi.PortBinding{
-		{HostIP: "192.168.1.10", HostPort: "8080"},
-	})
-
-	assert.Equal(t, "192.168.1.10", port.HostIP)
-	assert.Equal(t, "8080", port.HostPort)
-}

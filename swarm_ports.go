@@ -75,7 +75,6 @@ func (r *swarmPortResolver) ResolveSwarmPorts(container *dockerapi.Container) ([
 		if p.PublishedPort == 0 && p.TargetPort == 0 {
 			continue
 		}
-		isHostPublishMode := p.PublishMode == swarmapi.PortConfigPublishModeHost
 		portType := "tcp"
 		if string(p.Protocol) != "" {
 			portType = string(p.Protocol)
@@ -85,25 +84,17 @@ func (r *swarmPortResolver) ResolveSwarmPorts(container *dockerapi.Container) ([
 			if hostIP == "" {
 				hostIP = r.runtime.NodeAddr
 			}
-			resolved := bridge.NewResolvedServicePort(
+			out = append(out, bridge.NewResolvedServicePort(
 				container,
 				hostIP,
 				fmt.Sprintf("%d", p.PublishedPort),
 				fmt.Sprintf("%d", p.TargetPort),
 				portType,
-			)
-			resolved.PreferPublishedPort = isHostPublishMode
-			out = append(out, resolved)
+			))
 			continue
 		}
 		for _, network := range networks {
-			preferredIP := network.ip
-			if isHostPublishMode {
-				// Host publish mode should advertise node/host IP, not per-overlay task IP.
-				// Empty preferredIP makes advertisedIP fall back to runtime.NodeAddr.
-				preferredIP = ""
-			}
-			hostIP := r.advertisedIP(service, preferredIP)
+			hostIP := r.advertisedIP(service, network.ip)
 			if hostIP == "" {
 				hostIP = r.runtime.NodeAddr
 			}
@@ -114,7 +105,6 @@ func (r *swarmPortResolver) ResolveSwarmPorts(container *dockerapi.Container) ([
 				fmt.Sprintf("%d", p.TargetPort),
 				portType,
 			)
-			resolved.PreferPublishedPort = isHostPublishMode
 			resolved.ExposedIP = network.ip
 			resolved.NetworkNames = []string{network.name}
 			out = append(out, resolved)

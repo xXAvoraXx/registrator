@@ -509,6 +509,9 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 		service.IP = port.ExposedIP
 		p, _ = strconv.Atoi(port.ExposedPort)
 		if port.PreferPublishedPort && port.HostPort != "" {
+			if port.HostIP != "" {
+				service.IP = port.HostIP
+			}
 			p, _ = strconv.Atoi(port.HostPort)
 		}
 	} else {

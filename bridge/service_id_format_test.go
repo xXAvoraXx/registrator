@@ -84,6 +84,32 @@ func TestResolvedSwarmPortUsesTargetPortForAddressWhenInternal(t *testing.T) {
 	assert.Equal(t, "10.0.1.44", service.IP)
 }
 
+func TestResolvedSwarmHostPublishUsesHostIPWhenInternal(t *testing.T) {
+	previousHostname := Hostname
+	Hostname = "vps-74f5f77e"
+	defer func() { Hostname = previousHostname }()
+
+	container := &dockerapi.Container{
+		ID:   "abc123",
+		Name: "/applications-keygen-zrf594_keygen-api.1.0he9h1ksvgydzexi84w6lkpog",
+		Config: &dockerapi.Config{
+			Image: "keygen/api:latest",
+		},
+		HostConfig:      &dockerapi.HostConfig{},
+		NetworkSettings: &dockerapi.NetworkSettings{IPAddress: "10.0.1.44"},
+	}
+	port := NewResolvedServicePort(container, "100.101.1.1", "6000", "3000", "tcp")
+	port.PreferPublishedPort = true
+
+	b := &Bridge{config: Config{Internal: true}}
+	service := b.newService(port, false)
+
+	assert.NotNil(t, service)
+	assert.Equal(t, "vps-74f5f77e:applications-keygen-zrf594_keygen-api.1.0he9h1ksvgydzexi84w6lkpog:3000", service.ID)
+	assert.Equal(t, 6000, service.Port)
+	assert.Equal(t, "100.101.1.1", service.IP)
+}
+
 func TestSwarmUsesMachineHostnameInServiceID(t *testing.T) {
 	previousHostname := Hostname
 	Hostname = "ephemeral-container-id"

@@ -5,7 +5,9 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"sync/atomic"
 	"time"
 
@@ -125,6 +127,18 @@ func main() {
 	atomic.AddUint64(&reconcileRuns, 1)
 
 	quit := make(chan struct{})
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-signals
+		log.Println("shutdown signal received, deregistering services ...")
+		b.DeregisterAll()
+		if err := docker.RemoveEventListener(events); err != nil {
+			log.Println("failed to remove docker event listener:", err)
+		}
+		os.Exit(0)
+	}()
 
 	// Start the TTL refresh timer
 	refreshInterval := cfg.Runtime.RefreshInterval

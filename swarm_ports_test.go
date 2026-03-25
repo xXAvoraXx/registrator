@@ -94,7 +94,7 @@ func TestServiceNetworksInfoSkipsIngressNetwork(t *testing.T) {
 	}
 }
 
-func TestResolveSwarmPortsUsesSelectedNetworkIPForExposedIP(t *testing.T) {
+func TestResolveSwarmPortsUsesNodeAddressForHostIPAndNetworkIPForExposedIP(t *testing.T) {
 	serviceID := "service-id"
 	dockerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -127,7 +127,7 @@ func TestResolveSwarmPortsUsesSelectedNetworkIPForExposedIP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create docker client: %v", err)
 	}
-	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "manager"}, "", "", 2375, "")
+	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "manager", NodeAddr: "203.0.113.10"}, "", "", 2375, "")
 	container := &dockerapi.Container{
 		Config: &dockerapi.Config{
 			Labels: map[string]string{"com.docker.swarm.service.id": serviceID},
@@ -149,6 +149,9 @@ func TestResolveSwarmPortsUsesSelectedNetworkIPForExposedIP(t *testing.T) {
 	}
 	if ports[0].ExposedIP != "10.0.1.194" {
 		t.Fatalf("expected exposed IP from selected network, got: %s", ports[0].ExposedIP)
+	}
+	if ports[0].HostIP != "203.0.113.10" {
+		t.Fatalf("expected host IP from swarm node address, got: %s", ports[0].HostIP)
 	}
 }
 

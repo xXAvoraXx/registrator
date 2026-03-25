@@ -355,9 +355,6 @@ func (r *swarmPortResolver) advertisedIP(service *swarmapi.Service, preferredIP 
 		if r.advertiseOverride != "" {
 			return r.advertiseOverride
 		}
-		if preferredIP != "" {
-			return preferredIP
-		}
 		return r.runtime.NodeAddr
 	}
 }

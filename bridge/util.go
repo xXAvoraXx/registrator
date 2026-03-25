@@ -123,12 +123,13 @@ func servicePort(container *dockerapi.Container, port dockerapi.Port, published 
 		hip = "0.0.0.0"
 	}
 
-	//for overlay networks
-	//detect if container use overlay network, than set HostIP into NetworkSettings.Network[string].IPAddress
-	//better to use registrator with -internal flag
+	// For container-scoped network modes (including overlay/custom), prefer the network IP.
+	// Keep host/default/bridge untouched to preserve published host bindings.
 	nm = container.HostConfig.NetworkMode
-	if nm != "bridge" && nm != "default" && nm != "host" {
-		hip = container.NetworkSettings.Networks[nm].IPAddress
+	if hip == "0.0.0.0" && hp == "" && nm != "" && nm != "bridge" && nm != "default" && nm != "host" && !strings.HasPrefix(nm, "container:") {
+		if network, ok := container.NetworkSettings.Networks[nm]; ok && network.IPAddress != "" {
+			hip = network.IPAddress
+		}
 	}
 
 	exposedPort := strings.Split(string(port), "/")

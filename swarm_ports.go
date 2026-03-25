@@ -84,17 +84,25 @@ func (r *swarmPortResolver) ResolveSwarmPorts(container *dockerapi.Container) ([
 			if hostIP == "" {
 				hostIP = r.runtime.NodeAddr
 			}
-			out = append(out, bridge.NewResolvedServicePort(
+			resolved := bridge.NewResolvedServicePort(
 				container,
 				hostIP,
 				fmt.Sprintf("%d", p.PublishedPort),
 				fmt.Sprintf("%d", p.TargetPort),
 				portType,
-			))
+			)
+			if p.PublishMode == swarmapi.PortConfigPublishModeHost {
+				resolved.PreferPublishedPort = true
+			}
+			out = append(out, resolved)
 			continue
 		}
 		for _, network := range networks {
-			hostIP := r.advertisedIP(service, network.ip)
+			preferredIP := network.ip
+			if p.PublishMode == swarmapi.PortConfigPublishModeHost {
+				preferredIP = ""
+			}
+			hostIP := r.advertisedIP(service, preferredIP)
 			if hostIP == "" {
 				hostIP = r.runtime.NodeAddr
 			}
@@ -105,6 +113,9 @@ func (r *swarmPortResolver) ResolveSwarmPorts(container *dockerapi.Container) ([
 				fmt.Sprintf("%d", p.TargetPort),
 				portType,
 			)
+			if p.PublishMode == swarmapi.PortConfigPublishModeHost {
+				resolved.PreferPublishedPort = true
+			}
 			resolved.ExposedIP = network.ip
 			resolved.NetworkNames = []string{network.name}
 			out = append(out, resolved)

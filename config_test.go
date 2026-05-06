@@ -43,7 +43,11 @@ func TestRuntimeEnvOverrides(t *testing.T) {
 	t.Setenv("REGISTRATOR_RUNTIME_RETRY_ATTEMPTS", "-1")
 	t.Setenv("REGISTRATOR_RUNTIME_RETRY_INTERVAL_MS", "500")
 	t.Setenv("REGISTRATOR_RUNTIME_RESYNC_INTERVAL", "60")
+	t.Setenv("REGISTRATOR_STATUS_TOKEN", "secret-token")
 	t.Setenv("REGISTRATOR_RUNTIME_MANAGER_API_PORT", "12345")
+	t.Setenv("REGISTRATOR_RUNTIME_ALLOW_DISCOVERY_OVERRIDES", "false")
+	t.Setenv("REGISTRATOR_RUNTIME_ALLOW_CHECK_SCRIPTS", "false")
+	t.Setenv("REGISTRATOR_RUNTIME_ALLOW_TEMPLATE_HTTP_GET", "false")
 
 	cfg := defaultAppConfig()
 	applyEnvOverrides(&cfg)
@@ -59,7 +63,20 @@ func TestRuntimeEnvOverrides(t *testing.T) {
 	testassert.Equal(t, -1, cfg.Runtime.RetryAttempts)
 	testassert.Equal(t, 500, cfg.Runtime.RetryIntervalMs)
 	testassert.Equal(t, 60, cfg.Runtime.ResyncInterval)
+	testassert.Equal(t, "secret-token", cfg.Runtime.StatusToken)
 	testassert.Equal(t, 12345, cfg.Runtime.ManagerAPIPort)
+	testassert.False(t, cfg.Runtime.AllowDiscoveryOverrides)
+	testassert.False(t, cfg.Runtime.AllowCheckScripts)
+	testassert.False(t, cfg.Runtime.AllowTemplateHTTPGet)
+}
+
+func TestSecurityDefaultsPreserveExistingBehavior(t *testing.T) {
+	cfg := defaultAppConfig()
+
+	testassert.True(t, cfg.Runtime.AllowDiscoveryOverrides)
+	testassert.True(t, cfg.Runtime.AllowCheckScripts)
+	testassert.True(t, cfg.Runtime.AllowTemplateHTTPGet)
+	testassert.Empty(t, cfg.Runtime.StatusToken)
 }
 
 func TestCLIOverridesEnvAndConfig(t *testing.T) {
@@ -70,12 +87,14 @@ func TestCLIOverridesEnvAndConfig(t *testing.T) {
 	cfg := defaultAppConfig()
 	applyEnvOverrides(&cfg)
 
-	err := applyCLIOverrides(&cfg, []string{"-REGISTRATOR_RUNTIME_INTERNAL=true", "-REGISTRATOR_RUNTIME_RETRY_ATTEMPTS=2", "-REGISTRATOR_DISCOVERY_MODE=service", "-REGISTRATOR_RUNTIME_MANAGER_API_PORT=22345"})
+	err := applyCLIOverrides(&cfg, []string{"-REGISTRATOR_RUNTIME_INTERNAL=true", "-REGISTRATOR_RUNTIME_RETRY_ATTEMPTS=2", "-REGISTRATOR_DISCOVERY_MODE=service", "-REGISTRATOR_RUNTIME_MANAGER_API_PORT=22345", "-REGISTRATOR_STATUS_TOKEN=cli-token", "-REGISTRATOR_RUNTIME_ALLOW_CHECK_SCRIPTS=false"})
 	testassert.NoError(t, err)
 	testassert.True(t, cfg.Runtime.Internal)
 	testassert.Equal(t, 2, cfg.Runtime.RetryAttempts)
 	testassert.Equal(t, "service", cfg.Discovery.Mode)
 	testassert.Equal(t, 22345, cfg.Runtime.ManagerAPIPort)
+	testassert.Equal(t, "cli-token", cfg.Runtime.StatusToken)
+	testassert.False(t, cfg.Runtime.AllowCheckScripts)
 }
 
 func TestCLIOverridesRejectEntrypointArgument(t *testing.T) {

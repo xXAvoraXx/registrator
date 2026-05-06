@@ -207,11 +207,12 @@ func (r *ConsulAdapter) Services() ([]*bridge.Service, error) {
 	i := 0
 	for _, v := range services {
 		s := &bridge.Service{
-			ID:   v.ID,
-			Name: v.Service,
-			Port: v.Port,
-			Tags: v.Tags,
-			IP:   v.Address,
+			ID:    v.ID,
+			Name:  v.Service,
+			Port:  v.Port,
+			Tags:  v.Tags,
+			IP:    v.Address,
+			Attrs: v.Meta,
 		}
 		out[i] = s
 		i++

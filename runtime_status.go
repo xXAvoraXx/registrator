@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -8,8 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,12 +33,12 @@ type swarmRuntime struct {
 }
 
 func detectSwarmRuntime(docker *dockerapi.Client) swarmRuntime {
-	info, err := docker.Info()
+	info, err := inspectDockerInfo(docker)
 	if err != nil {
 		return swarmRuntime{}
 	}
 	sw := swarmRuntime{
-		Enabled:  info.Swarm.LocalNodeState == "active",
+		Enabled:  string(info.Swarm.LocalNodeState) == "active",
 		NodeID:   info.Swarm.NodeID,
 		NodeAddr: info.Swarm.NodeAddr,
 		Role:     "worker",
@@ -89,6 +90,8 @@ type peerInfo struct {
 var peerDiscoveryLogState sync.Map
 var discoveredManagerAddrState sync.Map
 
+const statusTokenHeader = "X-Registrator-Token"
+
 func (s swarmRuntime) peerInfo() peerInfo {
 	return peerInfo{
 		ServiceID:   s.SwarmServiceID,
@@ -102,7 +105,7 @@ func (s swarmRuntime) peerInfo() peerInfo {
 	}
 }
 
-func serveStatus(addr string, b *bridge.Bridge, runtime swarmRuntime, docker *dockerapi.Client, eventsProcessed *uint64, reconcileRuns *uint64) {
+func serveStatus(addr string, b *bridge.Bridge, runtime swarmRuntime, docker *dockerapi.Client, eventsProcessed *uint64, reconcileRuns *uint64, statusToken string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -114,17 +117,17 @@ func serveStatus(addr string, b *bridge.Bridge, runtime swarmRuntime, docker *do
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/metrics", requireStatusToken(statusToken, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 		_, _ = fmt.Fprintf(w, "registrator_registered_services %d\n", b.ServiceCount())
 		_, _ = fmt.Fprintf(w, "registrator_events_processed_total %d\n", atomic.LoadUint64(eventsProcessed))
 		_, _ = fmt.Fprintf(w, "registrator_reconcile_runs_total %d\n", atomic.LoadUint64(reconcileRuns))
-	})
-	mux.HandleFunc("/peerinfo", func(w http.ResponseWriter, _ *http.Request) {
+	}))
+	mux.HandleFunc("/peerinfo", requireStatusToken(statusToken, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(runtime.peerInfo())
-	})
-	mux.HandleFunc("/swarm/service/", func(w http.ResponseWriter, req *http.Request) {
+	}))
+	mux.HandleFunc("/swarm/service/", requireStatusToken(statusToken, func(w http.ResponseWriter, req *http.Request) {
 		if docker == nil {
 			http.Error(w, "docker unavailable", http.StatusServiceUnavailable)
 			return
@@ -135,7 +138,7 @@ func serveStatus(addr string, b *bridge.Bridge, runtime swarmRuntime, docker *do
 			http.NotFound(w, req)
 			return
 		}
-		service, err := docker.InspectService(serviceID)
+		service, err := inspectSwarmService(docker, serviceID)
 		if err != nil {
 			log.Printf("status swarm service inspect failed for %s: %v", serviceID, err)
 			http.Error(w, err.Error(), http.StatusBadGateway)
@@ -143,21 +146,87 @@ func serveStatus(addr string, b *bridge.Bridge, runtime swarmRuntime, docker *do
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(service)
-	})
+	}))
+	warnIfUnprotectedStatus(addr, statusToken)
 	log.Printf("Serving status endpoints on %s", addr)
-	startPeerDiscovery(runtime, addr, func(info peerInfo) {
+	startPeerDiscovery(runtime, addr, statusToken, func(info peerInfo) {
 		if info.Role != "manager" {
 			return
 		}
 		b.Sync(true)
 		atomic.AddUint64(reconcileRuns, 1)
 	})
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+	}
+	if err := server.ListenAndServe(); err != nil {
 		log.Printf("status server stopped: %v", err)
 	}
 }
 
-func startPeerDiscovery(runtime swarmRuntime, addr string, onPeerDiscovered func(peerInfo)) {
+func requireStatusToken(token string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		if token != "" && !statusTokenAuthorized(req, token) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, req)
+	}
+}
+
+func statusTokenAuthorized(req *http.Request, token string) bool {
+	if constantTimeEqual(req.Header.Get(statusTokenHeader), token) {
+		return true
+	}
+	auth := req.Header.Get("Authorization")
+	const prefix = "Bearer "
+	return strings.HasPrefix(auth, prefix) && constantTimeEqual(strings.TrimPrefix(auth, prefix), token)
+}
+
+func constantTimeEqual(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+func addStatusToken(req *http.Request, token string) {
+	if token == "" {
+		return
+	}
+	req.Header.Set(statusTokenHeader, token)
+	req.Header.Set("Authorization", "Bearer "+token)
+}
+
+func warnIfUnprotectedStatus(addr, token string) {
+	if token != "" {
+		return
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	host = strings.Trim(host, "[]")
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		log.Printf("warning: status endpoints on %s are not token-protected", addr)
+		return
+	}
+	if strings.EqualFold(host, "localhost") {
+		return
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if !ip.IsLoopback() {
+			log.Printf("warning: status endpoints on %s are not token-protected", addr)
+		}
+		return
+	}
+	log.Printf("warning: status endpoints on %s are not token-protected", addr)
+}
+
+func startPeerDiscovery(runtime swarmRuntime, addr, statusToken string, onPeerDiscovered func(peerInfo)) {
 	if !runtime.RunningAsService || runtime.SwarmServiceName == "" {
 		return
 	}
@@ -169,14 +238,14 @@ func startPeerDiscovery(runtime swarmRuntime, addr string, onPeerDiscovered func
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
-		discoverPeers(peerHost, port, runtime.OverlayIP, onPeerDiscovered)
+		discoverPeers(peerHost, port, runtime.OverlayIP, statusToken, onPeerDiscovered)
 		for range ticker.C {
-			discoverPeers(peerHost, port, runtime.OverlayIP, onPeerDiscovered)
+			discoverPeers(peerHost, port, runtime.OverlayIP, statusToken, onPeerDiscovered)
 		}
 	}()
 }
 
-func discoverPeers(peerHost, port, selfOverlayIP string, onPeerDiscovered func(peerInfo)) {
+func discoverPeers(peerHost, port, selfOverlayIP, statusToken string, onPeerDiscovered func(peerInfo)) {
 	ips, err := net.LookupIP(peerHost)
 	if err != nil {
 		logPeerDiscoveryState("dns:"+peerHost, fmt.Sprintf("peer discovery DNS lookup failed for %s: %v", peerHost, err))
@@ -190,7 +259,7 @@ func discoverPeers(peerHost, port, selfOverlayIP string, onPeerDiscovered func(p
 			continue
 		}
 		url := "http://" + net.JoinHostPort(peerIP, port) + "/peerinfo"
-		info, err := fetchPeerInfo(client, url)
+		info, err := fetchPeerInfo(client, url, statusToken)
 		if err != nil {
 			logPeerDiscoveryState("peererr:"+peerIP, fmt.Sprintf("peer discovery fetch failed for %s: %v", peerIP, err))
 			continue
@@ -249,8 +318,13 @@ func logPeerDiscoveryState(key, message string) {
 	log.Print(message)
 }
 
-func fetchPeerInfo(client *http.Client, url string) (peerInfo, error) {
-	resp, err := client.Get(url)
+func fetchPeerInfo(client *http.Client, url, statusToken string) (peerInfo, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return peerInfo{}, err
+	}
+	addStatusToken(req, statusToken)
+	resp, err := client.Do(req)
 	if err != nil {
 		return peerInfo{}, err
 	}

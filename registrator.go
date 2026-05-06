@@ -50,7 +50,7 @@ func main() {
 	assert(err)
 
 	swarmInfo := detectSwarmRuntime(docker)
-	resolver := newSwarmPortResolver(docker, swarmInfo, cfg.Runtime.AdvertiseMode, cfg.Runtime.AdvertiseIPOverride, cfg.Runtime.ManagerAPIPort, statusPort(cfg.Runtime.StatusAddr))
+	resolver := newSwarmPortResolver(docker, swarmInfo, cfg.Runtime.AdvertiseMode, cfg.Runtime.AdvertiseIPOverride, cfg.Runtime.ManagerAPIPort, statusPort(cfg.Runtime.StatusAddr), cfg.Runtime.StatusToken)
 	if cfg.Discovery.Provider == "consul" {
 		consul.ConfigureRuntime(docker, consul.RuntimeConfig{
 			Mode:             cfg.Discovery.Mode,
@@ -72,9 +72,19 @@ func main() {
 		Cleanup:         cfg.Runtime.Cleanup,
 		LocalNodeID:     swarmInfo.NodeID,
 		ResolveSwarm:    resolver.ResolveSwarmPorts,
-		NameSource:      cfg.Service.NameSource,
-		NameLabelKey:    cfg.Service.LabelKey,
-		IDFormat:        cfg.Service.IDFormat,
+		InspectServiceLabels: func(serviceID string) (map[string]string, error) {
+			service, err := inspectSwarmService(docker, serviceID)
+			if err != nil {
+				return nil, err
+			}
+			return service.Spec.Labels, nil
+		},
+		NameSource:              cfg.Service.NameSource,
+		NameLabelKey:            cfg.Service.LabelKey,
+		IDFormat:                cfg.Service.IDFormat,
+		AllowDiscoveryOverrides: cfg.Runtime.AllowDiscoveryOverrides,
+		AllowCheckScripts:       cfg.Runtime.AllowCheckScripts,
+		AllowTemplateHTTPGet:    cfg.Runtime.AllowTemplateHTTPGet,
 	})
 	assert(err)
 
@@ -88,7 +98,7 @@ func main() {
 	}).Info("runtime swarm status")
 
 	if cfg.Runtime.StatusAddr != "" {
-		go serveStatus(cfg.Runtime.StatusAddr, b, swarmInfo, docker, &eventsProcessed, &reconcileRuns)
+		go serveStatus(cfg.Runtime.StatusAddr, b, swarmInfo, docker, &eventsProcessed, &reconcileRuns, cfg.Runtime.StatusToken)
 	}
 
 	attempt := 0

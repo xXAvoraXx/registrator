@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -12,9 +13,11 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff"
-	swarmapi "github.com/docker/docker/api/types/swarm"
 	dockerapi "github.com/fsouza/go-dockerclient"
 	"github.com/gliderlabs/registrator/bridge"
+	swarmapi "github.com/moby/moby/api/types/swarm"
+	"github.com/moby/moby/api/types/system"
+	mobyclient "github.com/moby/moby/client"
 )
 
 const (
@@ -32,6 +35,8 @@ type swarmPortResolver struct {
 	advertiseOverride string
 	managerAPIPort    int
 	peerInfoPort      string
+	statusToken       string
+	swarmClient       *mobyclient.Client
 }
 
 type serviceNetwork struct {
@@ -39,7 +44,11 @@ type serviceNetwork struct {
 	ip   string
 }
 
-func newSwarmPortResolver(docker *dockerapi.Client, runtime swarmRuntime, advertiseMode, advertiseOverride string, managerAPIPort int, peerInfoPort string) *swarmPortResolver {
+func newSwarmPortResolver(docker *dockerapi.Client, runtime swarmRuntime, advertiseMode, advertiseOverride string, managerAPIPort int, peerInfoPort, statusToken string) *swarmPortResolver {
+	swarmClient, err := newSwarmAPIClient(docker)
+	if err != nil {
+		log.Printf("swarm api client setup failed: %v", err)
+	}
 	return &swarmPortResolver{
 		docker:            docker,
 		runtime:           runtime,
@@ -47,7 +56,43 @@ func newSwarmPortResolver(docker *dockerapi.Client, runtime swarmRuntime, advert
 		advertiseOverride: advertiseOverride,
 		managerAPIPort:    managerAPIPort,
 		peerInfoPort:      peerInfoPort,
+		statusToken:       statusToken,
+		swarmClient:       swarmClient,
 	}
+}
+
+func newSwarmAPIClient(docker *dockerapi.Client) (*mobyclient.Client, error) {
+	if docker == nil {
+		return nil, fmt.Errorf("docker client unavailable")
+	}
+	return mobyclient.NewClientWithOpts(
+		mobyclient.WithHost(docker.Endpoint()),
+		mobyclient.WithAPIVersion(defaultDockerAPIVersion),
+	)
+}
+
+func inspectSwarmService(docker *dockerapi.Client, serviceID string) (*swarmapi.Service, error) {
+	client, err := newSwarmAPIClient(docker)
+	if err != nil {
+		return nil, err
+	}
+	result, err := client.ServiceInspect(context.Background(), serviceID, mobyclient.ServiceInspectOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return &result.Service, nil
+}
+
+func inspectDockerInfo(docker *dockerapi.Client) (*system.Info, error) {
+	client, err := newSwarmAPIClient(docker)
+	if err != nil {
+		return nil, err
+	}
+	result, err := client.Info(context.Background(), mobyclient.InfoOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return &result.Info, nil
 }
 
 func (r *swarmPortResolver) ResolveSwarmPorts(container *dockerapi.Container) ([]bridge.ServicePort, error) {
@@ -115,9 +160,9 @@ func (r *swarmPortResolver) ResolveSwarmPorts(container *dockerapi.Container) ([
 
 func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service, error) {
 	if r.runtime.Role == "manager" {
-		return r.docker.InspectService(serviceID)
+		return r.inspectServiceLocal(serviceID)
 	}
-	service, err := r.docker.InspectService(serviceID)
+	service, err := r.inspectServiceLocal(serviceID)
 	if err == nil && serviceHasPublishedPorts(service) {
 		return service, nil
 	}
@@ -160,10 +205,26 @@ func (r *swarmPortResolver) inspectService(serviceID string) (*swarmapi.Service,
 	return service, retryErr
 }
 
+func (r *swarmPortResolver) inspectServiceLocal(serviceID string) (*swarmapi.Service, error) {
+	if r.swarmClient == nil {
+		return nil, fmt.Errorf("swarm api client unavailable")
+	}
+	result, err := r.swarmClient.ServiceInspect(context.Background(), serviceID, mobyclient.ServiceInspectOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return &result.Service, nil
+}
+
 func (r *swarmPortResolver) inspectServiceViaPeer(addr, serviceID string) (*swarmapi.Service, error) {
 	client := &http.Client{Timeout: peerInfoRequestTimeout}
 	endpoint := "http://" + net.JoinHostPort(addr, r.peerInfoPort) + "/swarm/service/" + url.PathEscape(serviceID)
-	resp, err := client.Get(endpoint)
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	addStatusToken(req, r.statusToken)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -190,10 +251,14 @@ func serviceHasPublishedPorts(service *swarmapi.Service) bool {
 
 func (r *swarmPortResolver) managerNodeAddrs() []string {
 	addrSet := make(map[string]struct{})
-	nodes, err := r.docker.ListNodes(dockerapi.ListNodesOptions{})
-	if err == nil {
-		for _, addr := range managerAddrsFromNodes(nodes) {
-			addrSet[addr] = struct{}{}
+	if r.swarmClient != nil {
+		nodes, err := r.swarmClient.NodeList(context.Background(), mobyclient.NodeListOptions{})
+		if err == nil {
+			for _, addr := range managerAddrsFromNodes(nodes.Items) {
+				addrSet[addr] = struct{}{}
+			}
+		} else {
+			log.Printf("swarm manager fallback: unable to list nodes: %v", err)
 		}
 	}
 	for _, addr := range discoveredManagerAddrs() {
@@ -241,7 +306,7 @@ func (r *swarmPortResolver) managerAddrsFromTaskDNS() []string {
 			if net.ParseIP(addr) == nil {
 				continue
 			}
-			info, err := fetchPeerInfo(client, "http://"+net.JoinHostPort(addr, r.peerInfoPort)+"/peerinfo")
+			info, err := fetchPeerInfo(client, "http://"+net.JoinHostPort(addr, r.peerInfoPort)+"/peerinfo", r.statusToken)
 			if err != nil || info.Role != "manager" {
 				continue
 			}
@@ -347,10 +412,10 @@ func (r *swarmPortResolver) advertisedIP(service *swarmapi.Service, preferredIP 
 			return ""
 		}
 		addr := service.Endpoint.VirtualIPs[0].Addr
-		if idx := strings.Index(addr, "/"); idx >= 0 {
-			return addr[:idx]
+		if !addr.IsValid() {
+			return ""
 		}
-		return addr
+		return addr.Addr().String()
 	default:
 		if r.advertiseOverride != "" {
 			return r.advertiseOverride

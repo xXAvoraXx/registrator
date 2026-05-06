@@ -1,13 +1,11 @@
 # Service Object
 
-Registrator is primarily concerned with services that would be added to a
-service discovery registry. In our case, a service is anything listening on a
-port. If a container listens on multiple ports, it has multiple services.
+Registrator is primarily concerned with services that are added to a service
+discovery registry. In this model, a service is anything listening on a port.
+If a container listens on multiple ports, it has multiple services.
 
-Services are created with information from the container, including user-defined
-metadata on the container, into an intermediary service object. This service
-object is then passed to a registry backend to try and place as much of this
-object into a particular registry.
+Services are created from container metadata and then passed to a registry
+backend.
 
 	type Service struct {
 		ID    string               // unique service instance ID
@@ -22,39 +20,36 @@ object into a particular registry.
 
 The fields `Name`, `Tags`, `Attrs`, and `ID` can be overridden by user-defined
 container metadata. You can use environment variables or labels prefixed with
-`SERVICE_` or `SERVICE_x_` to set values, where `x` is the internal exposed port.
-For example `SERVICE_NAME=customerdb` and `SERVICE_80_NAME=api`.
+`SERVICE_` or `SERVICE_x_` to set values, where `x` is the internal exposed
+port. For example `SERVICE_NAME=customerdb` and `SERVICE_80_NAME=api`.
 
 You use a port in the key name to refer to a particular service on that port.
-Metadata variables without a port in the name are used as the default for all
-services or can be used to conveniently refer to the single exposed service.
+Metadata variables without a port in the name are used as defaults for all
+services or can be used to refer to the single exposed service.
 
 The `Attrs` field is populated by metadata using any other field names in the
 key name. For example, `SERVICE_REGION=us-east`.
 
 Since metadata is stored as environment variables or labels, the container
-author can include their own metadata defined in the Dockerfile. The operator
-will still be able to override these author-defined defaults.
-
+author can include defaults in the Dockerfile and the operator can still
+override them.
 
 ## Detecting Services
 
-By default, you can expect Registrator to pick up services from containers that
-have *explicitly published ports* (eg, using `-p` or `-P`). This is true for
-containers running in host network mode as well, so you'll have to publish ports
-even though it doesn't do anything networking wise:
+By default, Registrator picks up services from containers that have explicitly
+published ports, for example `-p` or `-P`. This is true for containers running
+in host network mode as well:
 
 	$ docker run --net=host -p 8080:8080 -p 8443:8443 ...
 
-If running with the `-internal` option, it will instead look for exposed ports.
-These can be implicitly set from the Dockerfile or explicitly set with `docker run
---expose=8080 ...`.
+If running with `runtime.internal=true` or
+`REGISTRATOR_RUNTIME_INTERNAL=true`, Registrator will instead look for exposed
+ports. These can be set from the Dockerfile or explicitly with:
 
-You can also tell Registrator to ignore a container by setting a
-label or environment variable for `SERVICE_IGNORE`.
+	$ docker run --expose=8080 ...
 
-If you need to ignore individual service on some container, you can use
-`SERVICE_<port>_IGNORE=true`.
+You can tell Registrator to ignore a container by setting `SERVICE_IGNORE`.
+You can ignore a single service with `SERVICE_<port>_IGNORE=true`.
 
 ## Service Name
 
@@ -64,72 +59,73 @@ service name is determined by this pattern:
 	<base(container-image)>[-<exposed-port> if >1 ports]
 
 Using the base of the container image, if the image is `gliderlabs/foobar`, the
-service name is `foobar`. If the image is `redis` the service name is simply
-`redis`.
+service name is `foobar`. If the image is `redis` the service name is `redis`.
 
-Additionally, if a container has multiple exposed ports, it will append the
-internal exposed port to differentiate from each other. For example, an image
-`nginx` with two exposed ports, 80 and 443, will produce two services named
-`nginx-80` and `nginx-443`.
+If a container has multiple exposed ports, Registrator appends the internal
+exposed port to differentiate them. For example, an image `nginx` with ports 80
+and 443 will produce two services named `nginx-80` and `nginx-443`.
 
-You can override this default name with label or environment variable
-`SERVICE_NAME` or `SERVICE_x_NAME`, where `x` is the internal exposed port. Note
-that if a container has multiple exposed ports then setting `SERVICE_NAME` will
-still result in multiple services named `SERVICE_NAME-<exposed port>`.
+You can override this default name with `SERVICE_NAME` or `SERVICE_x_NAME`,
+where `x` is the internal exposed port. If a container has multiple exposed
+ports then setting `SERVICE_NAME` still results in multiple services named
+`SERVICE_NAME-<exposed port>`.
 
 ## IP and Port
 
-IP and port make up the address that the service name resolves to. There are a
-number of ways Registrator can determine IP and port depending your setup. By
-default, port is the public *published* port and the IP is going to try and be
-your host IP.
+IP and port make up the address that the service name resolves to. By default,
+the port is the public published port and the IP attempts to resolve to the
+host IP.
 
-Since determining the right IP is difficult to do automatically, it's recommended
-to use the `-ip` option to explicitly tell Registrator what IP to use.
+If automatic IP detection is not right for your environment, set
+`runtime.hostIP` or `REGISTRATOR_RUNTIME_HOST_IP` explicitly.
 
-If you use the `-internal` option, Registrator will use the *exposed* port **and
-Docker-assigned internal IP of the container**.
+If you use `runtime.internal=true`, Registrator uses the exposed port and the
+Docker-assigned internal IP of the container.
 
 ## Tags and Attributes
 
-Tags and attributes are extra metadata fields for services. Not all backends
-support them. In fact, currently Consul supports tags and more recently as of
-version 1.0.7, it added support for attributes as well in the form of
-[KV metadata](https://www.consul.io/api/agent/service.html#meta) but no other
-backend supports attributes.
+Tags and attributes are extra metadata fields for services. Backend support is
+not uniform:
 
-Attributes can also be used by backends for registry specific features, not just
-generic metadata. For example, Consul uses them for [specifying HTTP health
-checks](./backends.md#consul).
+- Consul supports tags and service metadata
+- older key-value backends may ignore some or all attributes
+
+Attributes can also drive backend-specific features. For example, Consul uses
+them for health checks documented in [Backend Reference](./backends.md#consul).
+
+Registrator-managed Consul services also receive internal ownership metadata so
+restart and reconcile flows can identify which stale registrations belong to
+the current node. Treat those keys as implementation metadata, not application
+metadata.
 
 ## Unique ID
 
-The ID is a cluster-wide unique identifier for this service instance. For the
-most part, it's an implementation detail, as users typically use service names,
-not their IDs. Registrator comes up with a human-friendly string that encodes
-useful information in the ID based on this pattern:
+The ID is a cluster-wide unique identifier for the service instance. Users
+usually query by service name rather than ID, but IDs matter for reconcile and
+cleanup behavior.
+
+By default, Registrator uses the configured `service.idFormat` template. The
+default template is:
 
 	<hostname>:<container-name>:<exposed-port>[:udp if udp]
 
-The ID includes the hostname to help you identify which host this service is
-running on. This is why running Registrator in host network mode or setting
-Registrator's hostname to the host's hostname is important. Otherwise it will be
-the ID of the Registrator container, which is not terribly useful.
+The hostname portion is resolved from the local runtime identity used by
+Registrator for both registration and stale cleanup. In Swarm-aware mode this
+prefers Docker node or engine identity before falling back to the OS hostname.
 
-The name of the container for this service is also included. It uses the name
-instead of container ID because it's more human-friendly and user configurable.
+The name of the container is included because it is more human-friendly than a
+raw container ID.
 
-To identify this particular service in the container, it uses the internal
-exposed port. This represents the port the service is listening on inside the
-container. We use this because it likely better represents the service than the
-publicly published port. A published port might be an arbitrary 54292, whereas
-the exposed port might be 80, showing that it's an HTTP service.
+To identify the specific service, Registrator uses the internal exposed port.
+That is usually more meaningful than the published port, which may be an
+arbitrary host-side value.
 
-Lastly, if the service is identified as UDP, this is included in the ID to
-differentiate from a TCP service that could be listening on the same port.
+If the service is UDP, that is appended to differentiate it from TCP on the
+same port.
 
-Although this can be overridden on containers with `SERVICE_ID` or
-`SERVICE_x_ID`, it is not recommended.
+You can override the ID with `SERVICE_ID` or `SERVICE_x_ID`, but do it
+carefully. For Consul, this fork adds ownership metadata to its own
+registrations so custom IDs can still be cleaned up safely after restart.
 
 ## Examples
 
@@ -166,14 +162,16 @@ Results in `Service`:
 		"Attrs": {"region": "us2"}
 	}
 
-Keep in mind not all of the `Service` object may be used by the registry backend. For example, currently none of them support registering arbitrary attributes. This field is there for future use.
+Keep in mind not every backend uses the full `Service` object. Consul uses tags
+and metadata attributes; older backends may only use the core name, IP, and
+port fields.
 
-The comma can be escaped by adding a backslash, such as the following example:
+The comma can be escaped by adding a backslash:
 
-    $ docker run -d --name redis.0 -p 10000:6379 \
-        -e "SERVICE_NAME=db" \
-        -e "SERVICE_TAGS=/(;\\,:-_)/" \
-        -e "SERVICE_REGION=us2" progrium/redis
+	$ docker run -d --name redis.0 -p 10000:6379 \
+		-e "SERVICE_NAME=db" \
+		-e "SERVICE_TAGS=/(;\\,:-_)/" \
+		-e "SERVICE_REGION=us2" progrium/redis
 
 ### Multiple services with defaults
 
@@ -188,7 +186,7 @@ Results in two `Service` objects:
 			"Port": 4443,
 			"IP": "192.168.1.102",
 			"Tags": [],
-			"Attrs": {},
+			"Attrs": {}
 		},
 		{
 			"ID": "hostname:nginx.0:80",
@@ -218,7 +216,7 @@ Results in two `Service` objects:
 			"Port": 4443,
 			"IP": "192.168.1.102",
 			"Tags": ["www"],
-			"Attrs": {"sni": "enabled"},
+			"Attrs": {"sni": "enabled"}
 		},
 		{
 			"ID": "hostname:nginx.0:80",

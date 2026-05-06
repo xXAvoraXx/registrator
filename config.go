@@ -40,22 +40,26 @@ type AppConfig struct {
 		Level string `json:"level" yaml:"level"`
 	} `json:"logging" yaml:"logging"`
 	Runtime struct {
-		HostIP              string `json:"hostIP" yaml:"hostIP"`
-		Internal            bool   `json:"internal" yaml:"internal"`
-		Explicit            bool   `json:"explicit" yaml:"explicit"`
-		UseIPFromLabel      string `json:"useIPFromLabel" yaml:"useIPFromLabel"`
-		ForceTags           string `json:"forceTags" yaml:"forceTags"`
-		RefreshTTL          int    `json:"refreshTTL" yaml:"refreshTTL"`
-		RefreshInterval     int    `json:"refreshInterval" yaml:"refreshInterval"`
-		DeregisterCheck     string `json:"deregisterCheck" yaml:"deregisterCheck"`
-		Cleanup             bool   `json:"cleanup" yaml:"cleanup"`
-		RetryAttempts       int    `json:"retryAttempts" yaml:"retryAttempts"`
-		RetryIntervalMs     int    `json:"retryIntervalMs" yaml:"retryIntervalMs"`
-		ResyncInterval      int    `json:"resyncInterval" yaml:"resyncInterval"`
-		StatusAddr          string `json:"statusAddr" yaml:"statusAddr"`
-		AdvertiseMode       string `json:"advertiseMode" yaml:"advertiseMode"`
-		AdvertiseIPOverride string `json:"advertiseIPOverride" yaml:"advertiseIPOverride"`
-		ManagerAPIPort      int    `json:"managerAPIPort" yaml:"managerAPIPort"`
+		HostIP                  string `json:"hostIP" yaml:"hostIP"`
+		Internal                bool   `json:"internal" yaml:"internal"`
+		Explicit                bool   `json:"explicit" yaml:"explicit"`
+		UseIPFromLabel          string `json:"useIPFromLabel" yaml:"useIPFromLabel"`
+		ForceTags               string `json:"forceTags" yaml:"forceTags"`
+		RefreshTTL              int    `json:"refreshTTL" yaml:"refreshTTL"`
+		RefreshInterval         int    `json:"refreshInterval" yaml:"refreshInterval"`
+		DeregisterCheck         string `json:"deregisterCheck" yaml:"deregisterCheck"`
+		Cleanup                 bool   `json:"cleanup" yaml:"cleanup"`
+		RetryAttempts           int    `json:"retryAttempts" yaml:"retryAttempts"`
+		RetryIntervalMs         int    `json:"retryIntervalMs" yaml:"retryIntervalMs"`
+		ResyncInterval          int    `json:"resyncInterval" yaml:"resyncInterval"`
+		StatusAddr              string `json:"statusAddr" yaml:"statusAddr"`
+		StatusToken             string `json:"statusToken" yaml:"statusToken"`
+		AdvertiseMode           string `json:"advertiseMode" yaml:"advertiseMode"`
+		AdvertiseIPOverride     string `json:"advertiseIPOverride" yaml:"advertiseIPOverride"`
+		ManagerAPIPort          int    `json:"managerAPIPort" yaml:"managerAPIPort"`
+		AllowDiscoveryOverrides bool   `json:"allowDiscoveryOverrides" yaml:"allowDiscoveryOverrides"`
+		AllowCheckScripts       bool   `json:"allowCheckScripts" yaml:"allowCheckScripts"`
+		AllowTemplateHTTPGet    bool   `json:"allowTemplateHttpGet" yaml:"allowTemplateHttpGet"`
 	} `json:"runtime" yaml:"runtime"`
 }
 
@@ -79,6 +83,9 @@ func defaultAppConfig() AppConfig {
 	cfg.Runtime.ResyncInterval = 30
 	cfg.Runtime.AdvertiseMode = "node-ip"
 	cfg.Runtime.ManagerAPIPort = 2375
+	cfg.Runtime.AllowDiscoveryOverrides = true
+	cfg.Runtime.AllowCheckScripts = true
+	cfg.Runtime.AllowTemplateHTTPGet = true
 	return cfg
 }
 
@@ -136,7 +143,11 @@ func applyCLIOverrides(cfg *AppConfig, args []string) error {
 	runtimeRetryAttempts := fs.Int("REGISTRATOR_RUNTIME_RETRY_ATTEMPTS", cfg.Runtime.RetryAttempts, "")
 	runtimeRetryIntervalMs := fs.Int("REGISTRATOR_RUNTIME_RETRY_INTERVAL_MS", cfg.Runtime.RetryIntervalMs, "")
 	runtimeResyncInterval := fs.Int("REGISTRATOR_RUNTIME_RESYNC_INTERVAL", cfg.Runtime.ResyncInterval, "")
+	runtimeStatusToken := fs.String("REGISTRATOR_STATUS_TOKEN", cfg.Runtime.StatusToken, "")
 	runtimeManagerAPIPort := fs.Int("REGISTRATOR_RUNTIME_MANAGER_API_PORT", cfg.Runtime.ManagerAPIPort, "")
+	runtimeAllowDiscoveryOverrides := fs.Bool("REGISTRATOR_RUNTIME_ALLOW_DISCOVERY_OVERRIDES", cfg.Runtime.AllowDiscoveryOverrides, "")
+	runtimeAllowCheckScripts := fs.Bool("REGISTRATOR_RUNTIME_ALLOW_CHECK_SCRIPTS", cfg.Runtime.AllowCheckScripts, "")
+	runtimeAllowTemplateHTTPGet := fs.Bool("REGISTRATOR_RUNTIME_ALLOW_TEMPLATE_HTTP_GET", cfg.Runtime.AllowTemplateHTTPGet, "")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -178,7 +189,11 @@ func applyCLIOverrides(cfg *AppConfig, args []string) error {
 	cfg.Runtime.RetryAttempts = *runtimeRetryAttempts
 	cfg.Runtime.RetryIntervalMs = *runtimeRetryIntervalMs
 	cfg.Runtime.ResyncInterval = *runtimeResyncInterval
+	cfg.Runtime.StatusToken = *runtimeStatusToken
 	cfg.Runtime.ManagerAPIPort = *runtimeManagerAPIPort
+	cfg.Runtime.AllowDiscoveryOverrides = *runtimeAllowDiscoveryOverrides
+	cfg.Runtime.AllowCheckScripts = *runtimeAllowCheckScripts
+	cfg.Runtime.AllowTemplateHTTPGet = *runtimeAllowTemplateHTTPGet
 
 	if extra := fs.Args(); len(extra) > 0 {
 		return fmt.Errorf("unexpected argument: %s", extra[0])
@@ -225,6 +240,9 @@ func applyEnvOverrides(cfg *AppConfig) {
 	}
 	if v := os.Getenv("REGISTRATOR_STATUS_ADDR"); v != "" {
 		cfg.Runtime.StatusAddr = v
+	}
+	if v := os.Getenv("REGISTRATOR_STATUS_TOKEN"); v != "" {
+		cfg.Runtime.StatusToken = v
 	}
 	if v := os.Getenv("REGISTRATOR_RUNTIME_HOST_IP"); v != "" {
 		cfg.Runtime.HostIP = v
@@ -273,6 +291,15 @@ func applyEnvOverrides(cfg *AppConfig) {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.Runtime.ManagerAPIPort = n
 		}
+	}
+	if v := os.Getenv("REGISTRATOR_RUNTIME_ALLOW_DISCOVERY_OVERRIDES"); v != "" {
+		cfg.Runtime.AllowDiscoveryOverrides = strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("REGISTRATOR_RUNTIME_ALLOW_CHECK_SCRIPTS"); v != "" {
+		cfg.Runtime.AllowCheckScripts = strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("REGISTRATOR_RUNTIME_ALLOW_TEMPLATE_HTTP_GET"); v != "" {
+		cfg.Runtime.AllowTemplateHTTPGet = strings.EqualFold(v, "true")
 	}
 }
 

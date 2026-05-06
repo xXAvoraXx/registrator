@@ -110,9 +110,13 @@ runtime:
   retryIntervalMs: 2000           # default: 2000
   resyncInterval: 30              # default: 30
   statusAddr: ":8080"             # default: empty
+  statusToken: ""                 # default: empty (no token required)
   advertiseMode: node-ip          # default: node-ip
   advertiseIPOverride: ""         # default: empty
   managerAPIPort: 2375            # default: 2375
+  allowDiscoveryOverrides: true   # default: true
+  allowCheckScripts: true         # default: true
+  allowTemplateHttpGet: true      # default: true
 logging:
   level: info                     # default: info
 ```
@@ -171,7 +175,11 @@ Supported environment variables:
 | `REGISTRATOR_RUNTIME_RETRY_ATTEMPTS` | `10` | Retry attempts for register/deregister (`-1` means infinite). |
 | `REGISTRATOR_RUNTIME_RETRY_INTERVAL_MS` | `2000` | Delay between retries in milliseconds. |
 | `REGISTRATOR_RUNTIME_RESYNC_INTERVAL` | `30` | Periodic resync interval in seconds. |
+| `REGISTRATOR_STATUS_TOKEN` | _(empty)_ | Optional bearer/header token required for `/metrics`, `/peerinfo`, and `/swarm/service/*`. |
 | `REGISTRATOR_RUNTIME_MANAGER_API_PORT` | `2375` | Docker API port that workers use to query manager nodes for Swarm service port metadata. |
+| `REGISTRATOR_RUNTIME_ALLOW_DISCOVERY_OVERRIDES` | `true` | Allows per-container `service.discovery.*` label overrides. |
+| `REGISTRATOR_RUNTIME_ALLOW_CHECK_SCRIPTS` | `true` | Allows Consul script/cmd checks from service metadata. |
+| `REGISTRATOR_RUNTIME_ALLOW_TEMPLATE_HTTP_GET` | `true` | Allows `httpGet` inside `runtime.forceTags` templates. |
 | `CONSUL_HTTP_TOKEN` | _(empty)_ | Consul ACL token (consumed by Consul client from env). |
 | `CONSUL_CACERT` | _(empty)_ | CA certificate file path used in `consul-tls` mode. |
 | `CONSUL_CLIENT_CERT` | _(empty)_ | Client certificate file path used in `consul-tls` mode. |
@@ -228,6 +236,8 @@ Runtime label overrides also affect discovery resolution per service:
 
 Registrator-managed service registrations always include the `registrator` tag.  
 Cleanup/dangling management only targets backend services that already carry the `registrator` tag.
+For Consul, registrator-managed services also carry internal ownership metadata
+used during restart/reconcile cleanup.
 
 ## Installation / Kurulum
 
@@ -331,7 +341,7 @@ For Swarm-resolved ports, Registrator now keeps one registration per exposed por
 
 - backend connection retries before startup completion (`-retry-attempts`, `-retry-interval`)
 - register/deregister operations retried with exponential backoff
-- optional periodic resync (`-resync`) to self-heal drift
+- optional periodic resync (`runtime.resyncInterval` / `REGISTRATOR_RUNTIME_RESYNC_INTERVAL`) to self-heal drift
 - readiness endpoint validates backend liveness through adapter `Ping()`
 - startup reconciliation seeds authoritative backend fingerprints before processing events, preventing duplicate writes after simultaneous restarts
 
@@ -347,7 +357,7 @@ See the **Configuration model** section for currently supported `REGISTRATOR_*` 
 ## Production best practices
 
 1. Run in Swarm global mode and mount `/var/run/docker.sock` to `/var/run/docker.sock`.
-2. Enable periodic reconciliation (`-resync`) to heal eventual drift.
+2. Enable periodic reconciliation (`runtime.resyncInterval` / `REGISTRATOR_RUNTIME_RESYNC_INTERVAL`) to heal eventual drift.
 3. Scrape `/metrics` and alert on event/reconcile anomalies.
 4. Gate traffic rollouts on `/readyz`.
 5. Keep backend ACL/TLS hardening enabled (for Consul and other adapters where supported).

@@ -1,12 +1,16 @@
 package consul
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	dockerapi "github.com/fsouza/go-dockerclient"
 	"github.com/gliderlabs/registrator/bridge"
-	"github.com/stretchr/testify/assert"
 	consulapi "github.com/hashicorp/consul/api"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestSelectSharedNetworkIPReturnsSharedNetworkAddress(t *testing.T) {
@@ -93,4 +97,38 @@ func TestBuildCheckUsesCheckHTTPPortOverride(t *testing.T) {
 
 	check := adapter.buildCheck(service)
 	assert.Equal(t, "http://10.0.0.5:8080/healthz", check.HTTP)
+}
+
+func TestServicesPreservesAgentServiceMeta(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/agent/services" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"svc-1": map[string]interface{}{
+				"ID":      "svc-1",
+				"Service": "api",
+				"Tags":    []string{"registrator"},
+				"Address": "10.0.1.20",
+				"Port":    3000,
+				"Meta": map[string]string{
+					"registrator_host": "worker-1",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	u, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("failed to parse server URL: %v", err)
+	}
+	adapter := &ConsulAdapter{baseConfig: &consulapi.Config{Address: u.Host, Scheme: u.Scheme}}
+
+	services, err := adapter.Services()
+	assert.NoError(t, err)
+	if assert.Len(t, services, 1) {
+		assert.Equal(t, "worker-1", services[0].Attrs["registrator_host"])
+	}
 }

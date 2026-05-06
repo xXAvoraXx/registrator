@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
-	"strings"
 	"testing"
 
 	dockerapi "github.com/fsouza/go-dockerclient"
@@ -17,7 +17,7 @@ import (
 func TestDetectSwarmRuntimeReadsSwarmTaskLabels(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.URL.Path == "/info":
+		case strings.HasSuffix(r.URL.Path, "/info"):
 			_, _ = w.Write([]byte(`{"Swarm":{"LocalNodeState":"active","NodeID":"info-node","NodeAddr":"10.0.0.2","ControlAvailable":true}}`))
 		case strings.HasPrefix(r.URL.Path, "/containers/") && strings.HasSuffix(r.URL.Path, "/json"):
 			_, _ = w.Write([]byte(`{"Config":{"Labels":{"com.docker.swarm.service.id":"svc-1","com.docker.swarm.service.name":"registrator","com.docker.swarm.task.id":"task-1","com.docker.swarm.node.id":"label-node"}},"NetworkSettings":{"Networks":{"ingress":{"IPAddress":"10.0.1.172"}}}}`))
@@ -63,11 +63,51 @@ func TestFetchPeerInfoParsesResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	info, err := fetchPeerInfo(server.Client(), server.URL+"/peerinfo")
+	info, err := fetchPeerInfo(server.Client(), server.URL+"/peerinfo", "")
 	if err != nil {
 		t.Fatalf("fetchPeerInfo returned error: %v", err)
 	}
 	if info.ServiceName != "registrator" || info.TaskID != "task-1" || info.Role != "worker" {
+		t.Fatalf("unexpected peer info payload: %+v", info)
+	}
+}
+
+func TestStatusTokenMiddlewareRequiresToken(t *testing.T) {
+	handler := requireStatusToken("secret", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	resp := httptest.NewRecorder()
+	handler(resp, req)
+	if resp.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unauthorized without token, got %d", resp.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set(statusTokenHeader, "secret")
+	resp = httptest.NewRecorder()
+	handler(resp, req)
+	if resp.Code != http.StatusNoContent {
+		t.Fatalf("expected accepted token, got %d", resp.Code)
+	}
+}
+
+func TestFetchPeerInfoSendsStatusToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(statusTokenHeader) != "secret" {
+			http.Error(w, "missing token", http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(peerInfo{Role: "manager"})
+	}))
+	defer server.Close()
+
+	info, err := fetchPeerInfo(server.Client(), server.URL+"/peerinfo", "secret")
+	if err != nil {
+		t.Fatalf("fetchPeerInfo returned error: %v", err)
+	}
+	if info.Role != "manager" {
 		t.Fatalf("unexpected peer info payload: %+v", info)
 	}
 }
@@ -112,8 +152,8 @@ func TestDiscoverPeersCallsCallbackOncePerPeerSignature(t *testing.T) {
 		}
 	}
 
-	discoverPeers(host, port, "", onPeerDiscovered)
-	discoverPeers(host, port, "", onPeerDiscovered)
+	discoverPeers(host, port, "", "", onPeerDiscovered)
+	discoverPeers(host, port, "", "", onPeerDiscovered)
 
 	if got := atomic.LoadInt32(&callbackCalls); got != 1 {
 		t.Fatalf("expected callback to run once for identical manager signature, got %d", got)

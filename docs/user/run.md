@@ -1,93 +1,173 @@
 # Run Reference
 
-Registrator is designed to be run once on every host. You *could* run a single
-Registrator for your cluster, but you get better scaling properties and easier
-configuration by ensuring Registrator runs on every host. Assuming some level of
-automation, running everywhere is ironically simpler than running once somewhere.
+Registrator is typically run once per host. In Swarm, the natural deployment
+model is a `global` service. That lets each node register its own local
+containers/tasks and clean up its own stale registrations.
 
-## Running Registrator
+## Configuration Model
 
-    docker run [docker options] gliderlabs/registrator[:tag] [options] <registry uri>
+Configuration precedence:
 
-Registrator requires and recommends some Docker options, has its own set of options
-and then requires a Registry URI. Here is a typical way to run Registrator:
+1. Config file (`REGISTRATOR_CONFIG`, default `/etc/registrator/config.yaml`)
+2. Environment variable overrides
+3. Runtime workload metadata overrides (`service.discovery.*`, `service.name`, `SERVICE_*`)
 
-    $ docker run -d \
-        --name=registrator \
-        --net=host \
-        --volume=/var/run/docker.sock:/var/run/docker.sock \
-        gliderlabs/registrator:latest \
-          consul://localhost:8500
+The main execution path is config/env driven. A positional `consul://...`
+registry URI is no longer the primary model.
 
-## Docker Options
+## Standalone Docker
 
-Option                                           | Required    | Description
-------                                           | --------    | -----------
-`--volume=/var/run/docker.sock:/var/run/docker.sock` | yes         | Allows Registrator to access Docker API
-`--net=host`                                     | recommended | Helps Registrator get host-level IP and hostname
+Typical example:
 
-An alternative to host network mode would be to set the container hostname to the host
-hostname (`-h $HOSTNAME`) and using the `-ip` Registrator option below.
+```bash
+docker run -d \
+  --name registrator \
+  --net=host \
+  --volume=/var/run/docker.sock:/var/run/docker.sock \
+  -e REGISTRATOR_DISCOVERY_PROVIDER=consul \
+  -e REGISTRATOR_DISCOVERY_MODE=local \
+  -e REGISTRATOR_DISCOVERY_PORT=8500 \
+  -e REGISTRATOR_RUNTIME_CLEANUP=true \
+  -e REGISTRATOR_RUNTIME_RESYNC_INTERVAL=30 \
+  -e REGISTRATOR_STATUS_ADDR=:8080 \
+  ghcr.io/xxavoraxx/registrator:latest
+```
 
-## Registrator Options
+Required Docker options:
 
-Option                           | Since | Description
-------                           | ----- | -----------
-`-cleanup`                       | v7    | Cleanup dangling services
-`-deregister <mode>`             | v6    | Deregister exited services "always" or "on-success". Default: always
-`-internal`                      |       | Use exposed ports instead of published ports
-`-ip <ip address>`               |       | Force IP address used for registering services
-`-resync <seconds>`              | v6    | Frequency all services are resynchronized. Default: 0, never
-`-retry-attempts <number>`       | v7    | Max retry attempts to establish a connection with the backend
-`-retry-interval <milliseconds>` | v7    | Interval (in millisecond) between retry-attempts
-`-tags <tags>`                   | v5    | Force comma-separated tags on all registered services
-`-ttl <seconds>`                 |       | TTL for services. Default: 0, no expiry (supported backends only)
-`-ttl-refresh <seconds>`         |       | Frequency service TTLs are refreshed (supported backends only)
-`-useIpFromLabel <label>`        |       | Uses the IP address stored in the given label, which is assigned to a container, for registration with Consul
+Option | Required | Description
+------ | -------- | -----------
+`--volume=/var/run/docker.sock:/var/run/docker.sock` | yes | Required for Docker API access
+`--net=host` | recommended | Easiest way to preserve host-level IP/hostname behavior and local backend reachability
 
-If the `-internal` option is used, Registrator will register the docker0
-internal IP and port instead of the host mapped ones.
+## Swarm Global Deployment
 
-By default, when registering a service, Registrator will assign the service
-address by attempting to resolve the current hostname. If you would like to
-force the service address to be a specific address, you can specify the `-ip`
-argument.
+Recommended production deployment:
 
-For registry backends that support TTL expiry, Registrator can both set and
-refresh service TTLs with `-ttl` and `-ttl-refresh`.
+```bash
+docker service create \
+  --name registrator \
+  --mode global \
+  --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
+  --network host \
+  --env REGISTRATOR_DISCOVERY_PROVIDER=consul \
+  --env REGISTRATOR_DISCOVERY_MODE=service \
+  --env REGISTRATOR_DISCOVERY_SERVICE_NAME=consul \
+  --env REGISTRATOR_RUNTIME_CLEANUP=true \
+  --env REGISTRATOR_RUNTIME_RESYNC_INTERVAL=30 \
+  --env REGISTRATOR_STATUS_ADDR=:8080 \
+  ghcr.io/xxavoraxx/registrator:latest
+```
 
-If you want unlimited retry-attempts use `-retry-attempts -1`.
+Swarm worker nodes first query the manager Docker API for service port metadata.
+If that path is unavailable, they fall back to the manager registrator peer
+endpoint.
 
-The `-resync` options controls how often Registrator will query Docker for all
-containers and reregister all services.  This allows Registrator and the service
-registry to get back in sync if they fall out of sync. Use this option with caution
-as it will notify all the watches you may have registered on your services, and
-may rapidly flood your system (e.g. consul-template makes extensive use of watches).
+Operational notes:
+
+- Keep `REGISTRATOR_RUNTIME_CLEANUP=true`.
+- Do not set `REGISTRATOR_RUNTIME_RESYNC_INTERVAL=0`; that disables drift healing.
+- Worker nodes must be able to reach manager node addresses on `REGISTRATOR_RUNTIME_MANAGER_API_PORT`.
+- If peer fallback is required, manager tasks must expose a reachable `REGISTRATOR_STATUS_ADDR` endpoint.
+
+## Running with a Config File
+
+Example `/etc/registrator/config.yaml`:
+
+```yaml
+discovery:
+  provider: consul
+  mode: local
+  port: 8500
+  serviceName: consul
+docker:
+  endpoint: unix:///var/run/docker.sock
+runtime:
+  cleanup: true
+  resyncInterval: 30
+  statusAddr: ":8080"
+logging:
+  level: info
+```
+
+Run:
+
+```bash
+docker run -d \
+  --name registrator \
+  --net=host \
+  --volume=/var/run/docker.sock:/var/run/docker.sock \
+  --volume=/etc/registrator/config.yaml:/etc/registrator/config.yaml:ro \
+  -e REGISTRATOR_CONFIG=/etc/registrator/config.yaml \
+  ghcr.io/xxavoraxx/registrator:latest
+```
+
+## Security Options
+
+Status endpoints:
+
+- `/healthz`
+- `/readyz`
+- `/metrics`
+- `/peerinfo`
+- `/swarm/service/{id}`
+
+If `REGISTRATOR_STATUS_TOKEN` is set, only these endpoints require a token:
+
+- `/metrics`
+- `/peerinfo`
+- `/swarm/service/*`
+
+`/healthz` and `/readyz` remain open for orchestrator probes.
+
+Additional hardening options:
+
+Variable | Default | Effect
+-------- | ------- | ------
+`REGISTRATOR_RUNTIME_ALLOW_DISCOVERY_OVERRIDES` | `true` | Enables/disables `service.discovery.*` label overrides
+`REGISTRATOR_RUNTIME_ALLOW_CHECK_SCRIPTS` | `true` | Enables/disables Consul `SERVICE_CHECK_SCRIPT` and `SERVICE_CHECK_CMD`
+`REGISTRATOR_RUNTIME_ALLOW_TEMPLATE_HTTP_GET` | `true` | Enables/disables `httpGet` use inside `runtime.forceTags` templates
+
+Registrator logs a warning when status endpoints are exposed on a non-loopback
+address without a token.
+
+## Common Environment Variables
+
+Variable | Default | Description
+-------- | ------- | -----------
+`REGISTRATOR_DISCOVERY_PROVIDER` | `consul` | Backend provider
+`REGISTRATOR_DISCOVERY_MODE` | `local` | Backend addressing mode
+`REGISTRATOR_DISCOVERY_ADDRESS` | _(empty)_ | Backend address override
+`REGISTRATOR_DISCOVERY_PORT` | `8500` | Backend port
+`REGISTRATOR_DISCOVERY_SERVICE_NAME` | `consul` | Backend service name in `service` mode
+`REGISTRATOR_DOCKER_ENDPOINT` | `unix:///var/run/docker.sock` | Docker API endpoint
+`REGISTRATOR_STATUS_ADDR` | _(empty)_ | Status endpoint listen address
+`REGISTRATOR_STATUS_TOKEN` | _(empty)_ | Status endpoint token
+`REGISTRATOR_RUNTIME_CLEANUP` | `true` | Stale registration cleanup
+`REGISTRATOR_RUNTIME_RESYNC_INTERVAL` | `30` | Periodic reconcile interval
+`REGISTRATOR_RUNTIME_MANAGER_API_PORT` | `2375` | Worker -> manager Docker API port
+`CONSUL_HTTP_TOKEN` | _(empty)_ | Consul ACL token
 
 ## Consul ACL token
 
-If consul is configured to require an ACL token, Registrator needs to know about it,
-or you will see warnings in the consul docker container
+If Consul ACLs are enabled, provide the token through the environment:
 
-    [WARN] consul.catalog: Register of service 'redis' on 'hostname' denied due to ACLs
+```bash
+docker run -d \
+  --name registrator \
+  --net=host \
+  --volume=/var/run/docker.sock:/var/run/docker.sock \
+  -e REGISTRATOR_DISCOVERY_PROVIDER=consul \
+  -e REGISTRATOR_DISCOVERY_MODE=local \
+  -e CONSUL_HTTP_TOKEN=<acl-token> \
+  ghcr.io/xxavoraxx/registrator:latest
+```
 
-The ACL token is passed in through docker in an environment variable called `CONSUL_HTTP_TOKEN`.
+## Backend URI Note
 
-    $ docker run -d \
-        --name=registrator \
-        --net=host \
-        --volume=/var/run/docker.sock:/var/run/docker.sock \
-        -e CONSUL_HTTP_TOKEN=<your acl token> \
-        gliderlabs/registrator:latest \
-          consul://localhost:8500
+Runtime configuration builds the registry URI from `provider`, `address`, and
+`port`. That model is sufficient for Consul.
 
-## Registry URI
-
-    <backend>://<address>[/<path>]
-
-The registry backend to use is defined by a URI. The scheme is the supported
-registry name. The address is a host or host and port used to connect to the
-registry. Some registries support a path definition used, for example, as the prefix to use
-in service definitions for key-value based registries.
-
-For full reference of supported backends, see [Registry Backends](backends.md).
+Legacy backends that require a path, prefix, or domain (`consulkv`, `etcd`,
+`skydns2`, `zookeeper`) still depend on the URI semantics described in the
+backend reference. Their config-first path is not as direct as Consul.

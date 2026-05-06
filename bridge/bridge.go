@@ -24,6 +24,14 @@ import (
 
 var serviceIDPattern = regexp.MustCompile(`^(.+?):([a-zA-Z0-9][a-zA-Z0-9_.-]+):[0-9]+(?::udp)?$`)
 
+const (
+	registratorManagedAttr       = "registrator_managed"
+	registratorHostAttr          = "registrator_host"
+	registratorNodeIDAttr        = "registrator_node_id"
+	registratorContainerIDAttr   = "registrator_container_id"
+	registratorContainerNameAttr = "registrator_container_name"
+)
+
 type Bridge struct {
 	sync.Mutex
 	registry       RegistryAdapter
@@ -145,7 +153,7 @@ func (b *Bridge) Sync(quiet bool) {
 		if !b.ownsContainer(container) {
 			if existing := b.services[listing.ID]; len(existing) > 0 {
 				log.Println("sync: skipping non-local container and removing local services for", listing.ID[:12])
-				b.remove(listing.ID, true)
+				b.removeLocked(listing.ID, true)
 			}
 			continue
 		}
@@ -164,6 +172,11 @@ func (b *Bridge) Sync(quiet bool) {
 			return
 		}
 		runningContainerIPs := b.runningContainerIPs(nonExitedContainers)
+		type staleRemoval struct {
+			containerID string
+			deregister  bool
+		}
+		staleRemovals := make([]staleRemoval, 0)
 		for listingId := range b.services {
 			found := false
 			for _, container := range nonExitedContainers {
@@ -175,19 +188,22 @@ func (b *Bridge) Sync(quiet bool) {
 			// This is a container that does not exist
 			if !found {
 				log.Printf("stale: Removing service %s because it does not exist", listingId)
-				go b.RemoveOnExit(listingId)
+				staleRemovals = append(staleRemovals, staleRemoval{containerID: listingId, deregister: b.shouldRemove(listingId)})
 				continue
 			}
 			container, inspectErr := b.docker.InspectContainer(listingId)
 			if inspectErr != nil {
 				log.Printf("stale: Removing service %s because Docker inspect failed during cleanup: %v", listingId, inspectErr)
-				go b.Remove(listingId)
+				staleRemovals = append(staleRemovals, staleRemoval{containerID: listingId, deregister: true})
 				continue
 			}
 			if reason := cleanupUnhealthyReason(container); reason != "" {
 				log.Printf("stale: Removing service %s because %s", listingId, reason)
-				go b.Remove(listingId)
+				staleRemovals = append(staleRemovals, staleRemoval{containerID: listingId, deregister: true})
 			}
+		}
+		for _, removal := range staleRemovals {
+			b.removeLocked(removal.containerID, removal.deregister)
 		}
 
 		log.Println("Cleaning up dangling services")
@@ -196,12 +212,8 @@ func (b *Bridge) Sync(quiet bool) {
 			log.Println("cleanup failed:", err)
 			return
 		}
-		preferredIDs := make(map[string]struct{})
-		for _, listing := range b.services {
-			for _, service := range listing {
-				preferredIDs[service.ID] = struct{}{}
-			}
-		}
+		preferredIDs := b.currentServiceIDs()
+		localHostIdentities := b.localHostIdentities()
 		managedExtServices := make([]*Service, 0, len(extServices))
 		for _, extService := range extServices {
 			if !isRegistratorManagedService(extService) {
@@ -219,17 +231,18 @@ func (b *Bridge) Sync(quiet bool) {
 				if _, ok := duplicateSet[extService.ID]; !ok {
 					continue
 				}
-				err := b.registry.Deregister(extService)
+				if !b.isLocalManagedService(extService, localHostIdentities) {
+					continue
+				}
+				err := b.deregisterService(extService)
 				if err != nil {
 					log.Println("duplicate cleanup deregister failed:", extService.ID, err)
 					continue
 				}
-				delete(b.serviceHashes, extService.ID)
 				log.Println("duplicate removed:", extService.ID)
 			}
 		}
 
-	Outer:
 		for _, extService := range extServices {
 			if !isRegistratorManagedService(extService) {
 				continue
@@ -237,48 +250,17 @@ func (b *Bridge) Sync(quiet bool) {
 			if _, duplicate := duplicateSet[extService.ID]; duplicate {
 				continue
 			}
-			matches := serviceIDPattern.FindStringSubmatch(extService.ID)
-			if len(matches) != 3 {
-				// There's no way this was registered by us, so leave it
+			if _, desired := preferredIDs[extService.ID]; desired {
 				continue
 			}
-			serviceHostname := matches[1]
-			if serviceHostname != Hostname {
-				// ignore because registered on a different host
+			if !b.isLocalManagedService(extService, localHostIdentities) {
 				continue
 			}
-			serviceContainerName := matches[2]
-			matchedLocalService := false
-			staleAddress := false
-			for _, listing := range b.services {
-				for _, service := range listing {
-					// Defensive guard: keep cleanup resilient if a transient nil slot appears.
-					if service == nil {
-						continue
-					}
-					containerName := ""
-					if service.Origin.container != nil {
-						containerName = strings.TrimPrefix(service.Origin.container.Name, "/")
-					}
-					if service.Name == extService.Name && serviceContainerName == containerName {
-						matchedLocalService = true
-						// Empty backend IP cannot be validated against Docker networks; keep existing dangling rules.
-						if extService.IP != "" && !isIPKnownInDockerNetworks(extService.IP, runningContainerIPs) {
-							staleAddress = true
-							log.Printf("dangling: %s stale address %s is not present in running Docker container networks", extService.ID, extService.IP)
-						}
-						break
-					}
-				}
-				if matchedLocalService {
-					break
-				}
-			}
-			if matchedLocalService && !staleAddress {
-				continue Outer
+			if extService.IP != "" && !isIPKnownInDockerNetworks(extService.IP, runningContainerIPs) {
+				log.Printf("dangling: %s stale address %s is not present in running Docker container networks", extService.ID, extService.IP)
 			}
 			log.Println("dangling:", extService.ID)
-			err := b.registry.Deregister(extService)
+			err := b.deregisterService(extService)
 			if err != nil {
 				log.Println("deregister failed:", extService.ID, err)
 				continue
@@ -395,16 +377,7 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 	}
 	defaultName := strings.Split(path.Base(container.Config.Image), ":")[0]
 
-	// not sure about this logic. kind of want to remove it.
-	hostname := Hostname
-	if container.Node != nil && container.Node.Name != "" {
-		hostname = container.Node.Name
-	} else if b.localHostname != "" {
-		hostname = b.localHostname
-	}
-	if hostname == "" {
-		hostname = port.HostIP
-	}
+	hostname := b.serviceHostname(container, port.HostIP)
 	if port.HostIP == "0.0.0.0" {
 		ip, err := net.ResolveIPAddr("ip", hostname)
 		if err == nil {
@@ -422,16 +395,20 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 		runtimeLabels[k] = v
 	}
 	if serviceID := container.Config.Labels["com.docker.swarm.service.id"]; serviceID != "" {
-		service, err := b.docker.InspectService(serviceID)
+		labels, err := b.inspectServiceLabels(serviceID)
 		if err == nil {
-			for k, v := range service.Spec.Labels {
+			for k, v := range labels {
 				runtimeLabels[k] = v
 			}
 		} else if !isSwarmManagerOnlyError(err) {
 			log.Println("unable to inspect swarm service labels for container", container.ID[:12], "service", serviceID, "error", err)
 		}
 	}
-	metadata = applyRuntimeOverrides(metadata, runtimeLabels)
+	metadata = applyRuntimeOverrides(metadata, runtimeLabels, b.config.AllowDiscoveryOverrides)
+	if !b.config.AllowCheckScripts {
+		delete(metadata, "check_cmd")
+		delete(metadata, "check_script")
+	}
 	genericHTTPCheck := metadata["check_http"] != "" && metadata["check_http_port"] == "" && !metadataFromPort["check_http"]
 	if genericHTTPCheck {
 		if checkPort := defaultHTTPCheckPort(container); checkPort != "" {
@@ -813,6 +790,10 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 			},
 		}
 
+		if !b.config.AllowTemplateHTTPGet {
+			delete(fm, "httpGet")
+		}
+
 		tmpl, err := template.New("tags").Funcs(fm).Parse(ForceTags)
 		if err != nil {
 			log.Fatalf("%s template parsing failed with error: %s", ForceTags, err)
@@ -848,7 +829,7 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 	delete(metadata, "id")
 	delete(metadata, "tags")
 	delete(metadata, "name")
-	service.Attrs = metadata
+	service.Attrs = b.withOwnershipMetadata(metadata, hostname, container)
 	service.TTL = b.config.RefreshTtl
 
 	return service
@@ -858,6 +839,10 @@ func (b *Bridge) remove(containerId string, deregister bool) {
 	b.Lock()
 	defer b.Unlock()
 
+	b.removeLocked(containerId, deregister)
+}
+
+func (b *Bridge) removeLocked(containerId string, deregister bool) {
 	if deregister {
 		deregisterAll := func(services []*Service) {
 			for _, service := range services {
@@ -919,6 +904,101 @@ func (b *Bridge) seedServiceHashes(services []*Service) {
 	b.serviceHashes = seeded
 }
 
+func (b *Bridge) currentServiceIDs() map[string]struct{} {
+	ids := make(map[string]struct{})
+	for _, services := range b.services {
+		for _, service := range services {
+			if service == nil || service.ID == "" {
+				continue
+			}
+			ids[service.ID] = struct{}{}
+		}
+	}
+	return ids
+}
+
+func (b *Bridge) serviceHostname(container *dockerapi.Container, fallbackIP string) string {
+	if container != nil && container.Node != nil && container.Node.Name != "" {
+		return container.Node.Name
+	}
+	if b.localHostname != "" {
+		return b.localHostname
+	}
+	if Hostname != "" {
+		return Hostname
+	}
+	return fallbackIP
+}
+
+func (b *Bridge) localHostIdentities() map[string]struct{} {
+	hosts := make(map[string]struct{})
+	add := func(value string) {
+		if value == "" {
+			return
+		}
+		hosts[value] = struct{}{}
+	}
+	add(b.localHostname)
+	add(Hostname)
+	for _, services := range b.services {
+		for _, service := range services {
+			if service == nil {
+				continue
+			}
+			if service.Attrs != nil {
+				add(service.Attrs[registratorHostAttr])
+			}
+			if service.Origin.container != nil && service.Origin.container.Node != nil {
+				add(service.Origin.container.Node.Name)
+			}
+		}
+	}
+	return hosts
+}
+
+func (b *Bridge) withOwnershipMetadata(attrs map[string]string, hostname string, container *dockerapi.Container) map[string]string {
+	if attrs == nil {
+		attrs = make(map[string]string)
+	}
+	attrs[registratorManagedAttr] = "true"
+	if hostname != "" {
+		attrs[registratorHostAttr] = hostname
+	}
+	if b.config.LocalNodeID != "" {
+		attrs[registratorNodeIDAttr] = b.config.LocalNodeID
+	}
+	if container != nil {
+		if container.ID != "" {
+			attrs[registratorContainerIDAttr] = container.ID
+		}
+		if container.Name != "" {
+			attrs[registratorContainerNameAttr] = strings.TrimPrefix(container.Name, "/")
+		}
+	}
+	return attrs
+}
+
+func (b *Bridge) isLocalManagedService(service *Service, localHostIdentities map[string]struct{}) bool {
+	if service == nil || !isRegistratorManagedService(service) {
+		return false
+	}
+	if service.Attrs != nil {
+		if nodeID := service.Attrs[registratorNodeIDAttr]; nodeID != "" && b.config.LocalNodeID != "" {
+			return nodeID == b.config.LocalNodeID
+		}
+		if host := service.Attrs[registratorHostAttr]; host != "" {
+			_, ok := localHostIdentities[host]
+			return ok
+		}
+	}
+	matches := serviceIDPattern.FindStringSubmatch(service.ID)
+	if len(matches) != 3 {
+		return false
+	}
+	_, ok := localHostIdentities[matches[1]]
+	return ok
+}
+
 func (b *Bridge) ownsContainer(container *dockerapi.Container) bool {
 	if b.config.LocalNodeID == "" {
 		return true
@@ -941,7 +1021,7 @@ func (b *Bridge) ownsContainer(container *dockerapi.Container) bool {
 	return nodeID == b.config.LocalNodeID
 }
 
-func applyRuntimeOverrides(metadata map[string]string, labels map[string]string) map[string]string {
+func applyRuntimeOverrides(metadata map[string]string, labels map[string]string, allowDiscoveryOverrides bool) map[string]string {
 	out := make(map[string]string, len(metadata))
 	for k, v := range metadata {
 		out[k] = v
@@ -949,7 +1029,9 @@ func applyRuntimeOverrides(metadata map[string]string, labels map[string]string)
 	for key, value := range labels {
 		switch key {
 		case "service.discovery.provider", "service.discovery.port", "service.discovery.mode", "service.discovery.name", "service.discovery.address":
-			out[key] = value
+			if allowDiscoveryOverrides {
+				out[key] = value
+			}
 		case "service.name":
 			out["name"] = value
 		}
@@ -959,6 +1041,13 @@ func applyRuntimeOverrides(metadata map[string]string, labels map[string]string)
 
 func isSwarmManagerOnlyError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "This node is not a swarm manager")
+}
+
+func (b *Bridge) inspectServiceLabels(serviceID string) (map[string]string, error) {
+	if b.config.InspectServiceLabels == nil {
+		return nil, errors.New("swarm service label inspection is not configured")
+	}
+	return b.config.InspectServiceLabels(serviceID)
 }
 
 func (b *Bridge) resolveServiceName(metadata map[string]string, container *dockerapi.Container, defaultName string) string {

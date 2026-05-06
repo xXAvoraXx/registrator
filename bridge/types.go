@@ -20,20 +20,24 @@ type RegistryAdapter interface {
 }
 
 type Config struct {
-	HostIp          string
-	Internal        bool
-	Explicit        bool
-	UseIpFromLabel  string
-	ForceTags       string
-	RefreshTtl      int
-	RefreshInterval int
-	DeregisterCheck string
-	Cleanup         bool
-	LocalNodeID     string
-	ResolveSwarm    func(container *dockerapi.Container) ([]ServicePort, error)
-	NameSource      string
-	NameLabelKey    string
-	IDFormat        string
+	HostIp                  string
+	Internal                bool
+	Explicit                bool
+	UseIpFromLabel          string
+	ForceTags               string
+	RefreshTtl              int
+	RefreshInterval         int
+	DeregisterCheck         string
+	Cleanup                 bool
+	LocalNodeID             string
+	ResolveSwarm            func(container *dockerapi.Container) ([]ServicePort, error)
+	InspectServiceLabels    func(serviceID string) (map[string]string, error)
+	NameSource              string
+	NameLabelKey            string
+	IDFormat                string
+	AllowDiscoveryOverrides bool
+	AllowCheckScripts       bool
+	AllowTemplateHTTPGet    bool
 }
 
 type Service struct {

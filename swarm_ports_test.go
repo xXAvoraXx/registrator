@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -15,16 +16,26 @@ import (
 	"sync/atomic"
 	"testing"
 
-	swarmapi "github.com/docker/docker/api/types/swarm"
 	dockerapi "github.com/fsouza/go-dockerclient"
+	"github.com/moby/moby/api/types/network"
+	swarmapi "github.com/moby/moby/api/types/swarm"
 )
+
+func mustPrefix(t *testing.T, value string) netip.Prefix {
+	t.Helper()
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil {
+		t.Fatalf("failed to parse prefix %q: %v", value, err)
+	}
+	return prefix
+}
 
 func TestInspectServiceNoManagerAddress(t *testing.T) {
 	docker, err := dockerapi.NewClient("unix:///tmp/registrator-missing-docker.sock")
 	if err != nil {
 		t.Fatalf("failed to create docker client: %v", err)
 	}
-	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", 2375, "")
+	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", 2375, "", "")
 
 	_, err = resolver.inspectService("service-id")
 	if err == nil {
@@ -53,7 +64,7 @@ func TestServiceNetworksInfoUsesServiceVIPNetworks(t *testing.T) {
 	service := &swarmapi.Service{
 		Endpoint: swarmapi.Endpoint{
 			VirtualIPs: []swarmapi.EndpointVirtualIP{
-				{Addr: "10.0.1.2/24", NetworkID: "app-id"},
+				{Addr: mustPrefix(t, "10.0.1.2/24"), NetworkID: "app-id"},
 			},
 		},
 	}
@@ -79,8 +90,8 @@ func TestServiceNetworksInfoSkipsIngressNetwork(t *testing.T) {
 	service := &swarmapi.Service{
 		Endpoint: swarmapi.Endpoint{
 			VirtualIPs: []swarmapi.EndpointVirtualIP{
-				{Addr: "10.0.9.2/24", NetworkID: "ingress-id"},
-				{Addr: "10.0.1.2/24", NetworkID: "app-id"},
+				{Addr: mustPrefix(t, "10.0.9.2/24"), NetworkID: "ingress-id"},
+				{Addr: mustPrefix(t, "10.0.1.2/24"), NetworkID: "app-id"},
 			},
 		},
 	}
@@ -106,13 +117,13 @@ func TestResolveSwarmPortsUsesSelectedNetworkIPForExposedIP(t *testing.T) {
 				Spec: swarmapi.ServiceSpec{
 					EndpointSpec: &swarmapi.EndpointSpec{
 						Ports: []swarmapi.PortConfig{
-							{PublishedPort: 6000, TargetPort: 3000, Protocol: swarmapi.PortConfigProtocolTCP},
+							{PublishedPort: 6000, TargetPort: 3000, Protocol: network.TCP},
 						},
 					},
 				},
 				Endpoint: swarmapi.Endpoint{
 					VirtualIPs: []swarmapi.EndpointVirtualIP{
-						{Addr: "10.0.9.2/24", NetworkID: "app-id"},
+						{Addr: mustPrefix(t, "10.0.9.2/24"), NetworkID: "app-id"},
 					},
 				},
 			}
@@ -127,7 +138,7 @@ func TestResolveSwarmPortsUsesSelectedNetworkIPForExposedIP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create docker client: %v", err)
 	}
-	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "manager"}, "", "", 2375, "")
+	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "manager"}, "", "", 2375, "", "")
 	container := &dockerapi.Container{
 		Config: &dockerapi.Config{
 			Labels: map[string]string{"com.docker.swarm.service.id": serviceID},
@@ -209,7 +220,7 @@ func TestInspectServiceWorkerLocalFirstThenManagerFallback(t *testing.T) {
 			Spec: swarmapi.ServiceSpec{
 				EndpointSpec: &swarmapi.EndpointSpec{
 					Ports: []swarmapi.PortConfig{
-						{PublishedPort: 5432, TargetPort: 5432, Protocol: swarmapi.PortConfigProtocolTCP},
+						{PublishedPort: 5432, TargetPort: 5432, Protocol: network.TCP},
 					},
 				},
 			},
@@ -231,7 +242,7 @@ func TestInspectServiceWorkerLocalFirstThenManagerFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create docker client: %v", err)
 	}
-	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", port, peerPort)
+	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", port, peerPort, "")
 	var buf bytes.Buffer
 	previousLogWriter := log.Writer()
 	log.SetOutput(&buf)
@@ -271,7 +282,7 @@ func TestInspectServiceFallsBackToManagerPeerWhenDockerAPIUnavailable(t *testing
 			Spec: swarmapi.ServiceSpec{
 				EndpointSpec: &swarmapi.EndpointSpec{
 					Ports: []swarmapi.PortConfig{
-						{PublishedPort: 5432, TargetPort: 5432, Protocol: swarmapi.PortConfigProtocolTCP},
+						{PublishedPort: 5432, TargetPort: 5432, Protocol: network.TCP},
 					},
 				},
 			},
@@ -319,7 +330,7 @@ func TestInspectServiceFallsBackToManagerPeerWhenDockerAPIUnavailable(t *testing
 	if err != nil {
 		t.Fatalf("failed to create docker client: %v", err)
 	}
-	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", 0, peerPort)
+	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", 0, peerPort, "")
 	service, err := resolver.inspectService("service-id")
 	if err != nil {
 		t.Fatalf("expected peer fallback inspect success, got: %v", err)
@@ -348,10 +359,43 @@ func TestInspectServiceViaPeerReturnsErrorOnNonOKStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create docker client: %v", err)
 	}
-	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", 2375, port)
+	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", 2375, port, "")
 	_, err = resolver.inspectServiceViaPeer(host, "service-id")
 	if err == nil || !strings.Contains(err.Error(), "status 502") {
 		t.Fatalf("expected non-200 status error, got: %v", err)
+	}
+}
+
+func TestInspectServiceViaPeerSendsStatusToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(statusTokenHeader) != "secret" {
+			http.Error(w, "missing token", http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(swarmapi.Service{ID: "service-id"})
+	}))
+	defer server.Close()
+
+	u, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("failed to parse server URL: %v", err)
+	}
+	host, port, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		t.Fatalf("failed to parse host and port: %v", err)
+	}
+
+	docker, err := dockerapi.NewClient("unix:///tmp/registrator-missing-docker.sock")
+	if err != nil {
+		t.Fatalf("failed to create docker client: %v", err)
+	}
+	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", 2375, port, "secret")
+	service, err := resolver.inspectServiceViaPeer(host, "service-id")
+	if err != nil {
+		t.Fatalf("expected peer inspect to succeed with token, got: %v", err)
+	}
+	if service.ID != "service-id" {
+		t.Fatalf("unexpected service response: %+v", service)
 	}
 }
 
@@ -389,7 +433,7 @@ func TestManagerNodeAddrsFallsBackToDiscoveredPeers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create docker client: %v", err)
 	}
-	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", 2375, "")
+	resolver := newSwarmPortResolver(docker, swarmRuntime{Role: "worker"}, "", "", 2375, "", "")
 	addrs := resolver.managerNodeAddrs()
 	if len(addrs) != 1 || addrs[0] != "10.0.1.44" {
 		t.Fatalf("expected discovered manager address fallback, got %+v", addrs)
@@ -420,7 +464,7 @@ func TestManagerNodeAddrsFallsBackToTaskDNSWhenManagersUnknown(t *testing.T) {
 		RunningAsService: true,
 		SwarmServiceName: "registrator",
 		OverlayIP:        "10.0.1.57",
-	}, "", "", 2375, "")
+	}, "", "", 2375, "", "")
 	addrs := resolver.managerNodeAddrs()
 	if len(addrs) != 1 || addrs[0] != "10.0.1.56" {
 		t.Fatalf("expected task DNS fallback manager candidates, got %+v", addrs)
@@ -469,7 +513,7 @@ func TestManagerAddrsFromTaskDNSPrefersManagerNodeAddrFromPeerInfo(t *testing.T)
 		Role:             "worker",
 		RunningAsService: true,
 		SwarmServiceName: "registrator",
-	}, "", "", 2375, port)
+	}, "", "", 2375, port, "")
 	addrs := resolver.managerAddrsFromTaskDNS()
 	if len(addrs) != 2 {
 		t.Fatalf("expected manager node+overlay addresses from peer info, got %+v", addrs)

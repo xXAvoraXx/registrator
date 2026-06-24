@@ -405,6 +405,7 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 			log.Println("unable to inspect swarm service labels for container", container.ID[:12], "service", serviceID, "error", err)
 		}
 	}
+	metadata, metadataFromPort = applyServiceMetadataLabels(metadata, metadataFromPort, runtimeLabels, port.ExposedPort)
 	metadata = applyRuntimeOverrides(metadata, runtimeLabels, b.config.AllowDiscoveryOverrides)
 	if !b.config.AllowCheckScripts {
 		delete(metadata, "check_cmd")

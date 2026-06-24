@@ -70,3 +70,49 @@ func TestNewServiceDropsScriptChecksWhenDisabled(t *testing.T) {
 	assert.Empty(t, service.Attrs["check_script"])
 	assert.Empty(t, service.Attrs["check_cmd"])
 }
+
+func TestNewServiceAppliesSwarmServiceMetadataLabels(t *testing.T) {
+	container := &dockerapi.Container{
+		ID:   "def456",
+		Name: "/keycloak.1.taskid",
+		Config: &dockerapi.Config{
+			Image: "keycloak:latest",
+			Labels: map[string]string{
+				"com.docker.swarm.service.id": "svc-keycloak",
+			},
+		},
+		HostConfig:      &dockerapi.HostConfig{},
+		NetworkSettings: &dockerapi.NetworkSettings{IPAddress: "10.0.0.6"},
+	}
+	b := &Bridge{config: Config{
+		Internal: true,
+		InspectServiceLabels: func(serviceID string) (map[string]string, error) {
+			assert.Equal(t, "svc-keycloak", serviceID)
+			return map[string]string{
+				"SERVICE_8080_CHECK_TCP":      "true",
+				"SERVICE_8080_CHECK_INTERVAL": "5s",
+				"SERVICE_8443_IGNORE":         "true",
+			}, nil
+		},
+	}}
+
+	service := b.newService(ServicePort{
+		ExposedIP:   "10.0.0.6",
+		ExposedPort: "8080",
+		PortType:    "tcp",
+		container:   container,
+	}, false)
+
+	assert.NotNil(t, service)
+	assert.Equal(t, "true", service.Attrs["check_tcp"])
+	assert.Equal(t, "5s", service.Attrs["check_interval"])
+
+	ignored := b.newService(ServicePort{
+		ExposedIP:   "10.0.0.6",
+		ExposedPort: "8443",
+		PortType:    "tcp",
+		container:   container,
+	}, true)
+
+	assert.Nil(t, ignored)
+}

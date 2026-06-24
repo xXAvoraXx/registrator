@@ -113,6 +113,38 @@ func serviceMetaData(config *dockerapi.Config, port string) (map[string]string, 
 	return metadata, metadataFromPort
 }
 
+func applyServiceMetadataLabels(metadata map[string]string, metadataFromPort map[string]bool, labels map[string]string, port string) (map[string]string, map[string]bool) {
+	out := make(map[string]string, len(metadata)+len(labels))
+	for k, v := range metadata {
+		out[k] = v
+	}
+	fromPort := make(map[string]bool, len(metadataFromPort))
+	for k, v := range metadataFromPort {
+		fromPort[k] = v
+	}
+	for rawKey, value := range labels {
+		if !strings.HasPrefix(rawKey, "SERVICE_") {
+			continue
+		}
+		key := strings.ToLower(strings.TrimPrefix(rawKey, "SERVICE_"))
+		if fromPort[key] {
+			continue
+		}
+		portkey := strings.SplitN(key, "_", 2)
+		_, err := strconv.Atoi(portkey[0])
+		if err == nil && len(portkey) > 1 {
+			if portkey[0] != port {
+				continue
+			}
+			out[portkey[1]] = value
+			fromPort[portkey[1]] = true
+		} else {
+			out[key] = value
+		}
+	}
+	return out, fromPort
+}
+
 func servicePort(container *dockerapi.Container, port dockerapi.Port, published []dockerapi.PortBinding) ServicePort {
 	var hp, hip, ep, ept, eip, nm string
 	if len(published) > 0 {

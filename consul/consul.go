@@ -15,7 +15,10 @@ import (
 	"github.com/hashicorp/go-cleanhttp"
 )
 
-const DefaultInterval = "10s"
+const (
+	DefaultInterval         = "10s"
+	missingServiceCheckAttr = "registrator_check_missing"
+)
 
 func init() {
 	f := new(Factory)
@@ -203,21 +206,59 @@ func (r *ConsulAdapter) Services() ([]*bridge.Service, error) {
 	if err != nil {
 		return []*bridge.Service{}, err
 	}
+	checks, err := client.Agent().Checks()
+	if err != nil {
+		log.Println("consul: unable to list agent checks during service reconciliation:", err)
+		checks = map[string]*consulapi.AgentCheck{}
+	}
+	serviceChecks := make(map[string]struct{}, len(checks))
+	for _, check := range checks {
+		if check == nil || check.ServiceID == "" {
+			continue
+		}
+		serviceChecks[check.ServiceID] = struct{}{}
+	}
 	out := make([]*bridge.Service, len(services))
 	i := 0
 	for _, v := range services {
+		attrs := make(map[string]string, len(v.Meta)+1)
+		for key, value := range v.Meta {
+			attrs[key] = value
+		}
+		if serviceWantsCheck(attrs) {
+			if _, ok := serviceChecks[v.ID]; !ok {
+				attrs[missingServiceCheckAttr] = "true"
+			}
+		}
 		s := &bridge.Service{
 			ID:    v.ID,
 			Name:  v.Service,
 			Port:  v.Port,
 			Tags:  v.Tags,
 			IP:    v.Address,
-			Attrs: v.Meta,
+			Attrs: attrs,
 		}
 		out[i] = s
 		i++
 	}
 	return out, nil
+}
+
+func serviceWantsCheck(attrs map[string]string) bool {
+	for _, key := range []string{
+		"check_http",
+		"check_https",
+		"check_cmd",
+		"check_script",
+		"check_ttl",
+		"check_tcp",
+		"check_grpc",
+	} {
+		if attrs[key] != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *ConsulAdapter) client(service *bridge.Service) (*consulapi.Client, error) {

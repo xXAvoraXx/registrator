@@ -228,6 +228,39 @@ func TestSyncRemovesLegacyStaleServiceUsingDockerHostIdentity(t *testing.T) {
 	assert.Equal(t, "worker-hostname:app.1.newtask:3000", b.services[containerID][0].ID)
 }
 
+func TestAddRemovesReplacedLocalServiceWithStaleAddress(t *testing.T) {
+	containerID := "2634567890123456789012345678901234567890123456789012345678901234"
+	docker, closeServer := newReconcileDockerClient(t,
+		map[string]map[string]interface{}{
+			containerID: reconcileContainerPayload(containerID, "app.1.newtask", "example/app:latest", "10.0.1.20", "", ""),
+		},
+		[]map[string]interface{}{reconcileListing(containerID, "app.1.newtask")},
+	)
+	defer closeServer()
+
+	registry := &reconcileRegistryAdapter{
+		services: []*Service{
+			{ID: "worker-hostname:app.1.oldtask:3000", Name: "app", IP: "10.0.1.10", Port: 3000, Tags: []string{registratorManagedTag}},
+		},
+	}
+	b := &Bridge{
+		docker:         docker,
+		localHostname:  "worker-hostname",
+		registry:       registry,
+		config:         Config{Cleanup: true, Internal: true},
+		services:       map[string][]*Service{},
+		serviceHashes:  map[string]string{},
+		deadContainers: map[string]*DeadContainer{},
+	}
+
+	b.Add(containerID)
+
+	assert.Equal(t, []string{"worker-hostname:app.1.oldtask:3000"}, serviceIDsForTest(registry.deregistered))
+	assert.Equal(t, []string{"worker-hostname:app.1.newtask:3000"}, serviceIDsForTest(registry.registered))
+	require.NotEmpty(t, b.services[containerID])
+	assert.Equal(t, "worker-hostname:app.1.newtask:3000", b.services[containerID][0].ID)
+}
+
 func TestSyncRetainsExactDesiredServiceWithoutDuplicateRegister(t *testing.T) {
 	containerID := "3234567890123456789012345678901234567890123456789012345678901234"
 	containerName := "app.1.task"

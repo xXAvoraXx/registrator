@@ -362,6 +362,7 @@ func (b *Bridge) add(containerId string, quiet bool) {
 		}
 		b.services[container.ID] = append(b.services[container.ID], service)
 		log.Println("added:", container.ID[:12], service.ID)
+		b.cleanupReplacedRegistrations(service)
 	}
 }
 
@@ -884,6 +885,46 @@ func (b *Bridge) deregisterService(service *Service) error {
 	}
 	delete(b.serviceHashes, service.ID)
 	return nil
+}
+
+func (b *Bridge) cleanupReplacedRegistrations(desired *Service) {
+	if desired == nil || desired.ID == "" || !b.config.Cleanup {
+		return
+	}
+	extServices, err := b.registry.Services()
+	if err != nil {
+		log.Println("replacement cleanup failed:", err)
+		return
+	}
+	filters := map[string][]string{"status": {"created", "restarting", "running", "paused"}}
+	nonExitedContainers, err := b.docker.ListContainers(dockerapi.ListContainersOptions{Filters: filters})
+	if err != nil {
+		log.Println("replacement cleanup could not list non-exited containers:", err)
+		return
+	}
+	runningContainerIPs := b.runningContainerIPs(nonExitedContainers)
+	localHostIdentities := b.localHostIdentities()
+	for _, extService := range extServices {
+		if extService == nil || extService.ID == desired.ID {
+			continue
+		}
+		if !isRegistratorManagedService(extService) {
+			continue
+		}
+		if extService.Name != desired.Name || extService.Port != desired.Port {
+			continue
+		}
+		if !b.isLocalManagedService(extService, localHostIdentities) {
+			continue
+		}
+		if extService.IP == "" || isIPKnownInDockerNetworks(extService.IP, runningContainerIPs) {
+			continue
+		}
+		log.Printf("replacement cleanup: removing %s stale address %s replaced by %s", extService.ID, extService.IP, desired.ID)
+		if err := b.deregisterService(extService); err != nil {
+			log.Println("replacement cleanup deregister failed:", extService.ID, err)
+		}
+	}
 }
 
 func (b *Bridge) ServiceCount() int {

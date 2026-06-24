@@ -116,3 +116,49 @@ func TestNewServiceAppliesSwarmServiceMetadataLabels(t *testing.T) {
 
 	assert.Nil(t, ignored)
 }
+
+func TestPortSpecificFalseIgnoreCanOverrideGenericIgnore(t *testing.T) {
+	container := &dockerapi.Container{
+		ID:   "ghi789",
+		Name: "/business-grpc.1.taskid",
+		Config: &dockerapi.Config{
+			Image: "business:latest",
+			Env:   []string{"SERVICE_IGNORE=1"},
+			Labels: map[string]string{
+				"com.docker.swarm.service.id": "svc-business-grpc",
+			},
+		},
+		HostConfig:      &dockerapi.HostConfig{},
+		NetworkSettings: &dockerapi.NetworkSettings{IPAddress: "10.0.0.7"},
+	}
+	b := &Bridge{config: Config{
+		Internal: true,
+		InspectServiceLabels: func(serviceID string) (map[string]string, error) {
+			assert.Equal(t, "svc-business-grpc", serviceID)
+			return map[string]string{
+				"SERVICE_8080_IGNORE":    "true",
+				"SERVICE_8081_IGNORE":    "false",
+				"SERVICE_8081_NAME":      "business-service-grpc",
+				"SERVICE_8081_CHECK_TCP": "true",
+			}, nil
+		},
+	}}
+
+	rest := b.newService(ServicePort{
+		ExposedIP:   "10.0.0.7",
+		ExposedPort: "8080",
+		PortType:    "tcp",
+		container:   container,
+	}, true)
+	assert.Nil(t, rest)
+
+	grpc := b.newService(ServicePort{
+		ExposedIP:   "10.0.0.7",
+		ExposedPort: "8081",
+		PortType:    "tcp",
+		container:   container,
+	}, false)
+	assert.NotNil(t, grpc)
+	assert.Equal(t, "business-service-grpc", grpc.Name)
+	assert.Equal(t, "true", grpc.Attrs["check_tcp"])
+}

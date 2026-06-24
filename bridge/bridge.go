@@ -424,8 +424,7 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 		}
 	}
 
-	ignore := mapDefault(metadata, "ignore", "")
-	if ignore != "" {
+	if metadataFlag(metadata, "ignore") {
 		return nil
 	}
 

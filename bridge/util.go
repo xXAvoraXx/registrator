@@ -23,6 +23,16 @@ func mapDefault(m map[string]string, key, default_ string) string {
 	return v
 }
 
+func metadataFlag(m map[string]string, key string) bool {
+	v := strings.ToLower(strings.TrimSpace(m[key]))
+	switch v {
+	case "", "0", "false", "no", "off":
+		return false
+	default:
+		return true
+	}
+}
+
 // Golang regexp module does not support /(?!\\),/ syntax for spliting by not escaped comma
 // Then this function is reproducing it
 func recParseEscapedComma(str string) []string {

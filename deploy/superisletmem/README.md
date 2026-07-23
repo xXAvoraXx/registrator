@@ -40,3 +40,10 @@ For each node in management, persistence, application order:
 
 Rollback one node by removing its migration gate label, restoring the saved
 Dokploy compose, and redeploying the standalone agent against the same volume.
+
+## Monitoring
+
+Mount the matching file from `monitoring/` into Prometheus and add node-local
+blackbox jobs for `/readyz` plus direct `/metrics` scrapes. Production probes
+must use `100.101.0.1`, `100.101.0.2`, and `100.101.0.3`; do not route these
+checks through Swarm ingress.

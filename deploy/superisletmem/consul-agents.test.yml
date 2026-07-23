@@ -19,7 +19,7 @@ services:
     volumes:
       - consul-agent-data:/consul/data
       - type: bind
-        source: /srv/config-share/consul-agent-config.hcl
+        source: /opt/config-share/consul-agent-config.hcl
         target: /consul/config/consul.hcl
         read_only: true
     ports:

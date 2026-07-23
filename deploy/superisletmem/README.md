@@ -21,6 +21,9 @@ Dokploy and are not part of this stack.
 5. Verify `agent-node-1`, catalog parity, critical checks, Registrator readiness,
    and the test Keycloak route.
 
+The test host uses `/opt/config-share/consul-agent-config.hcl`; production
+hosts use `/srv/config-share/consul-agent-config.hcl`.
+
 ## Production rollout
 
 Deploy `consul-agents.prod.yml` before setting the migration gate label. The

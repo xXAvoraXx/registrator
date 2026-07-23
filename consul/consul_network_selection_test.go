@@ -84,6 +84,123 @@ func TestResolveAddressFallsBackWhenDockerResolveFails(t *testing.T) {
 	assert.Equal(t, "127.0.0.1:8500", address)
 }
 
+func TestResolveAddressRejectsFallbackWhenLocalAgentIsRequired(t *testing.T) {
+	originalRuntimeConfig := runtimeConfig
+	originalRuntimeDockerClient := runtimeDockerClient
+	defer func() {
+		runtimeConfig = originalRuntimeConfig
+		runtimeDockerClient = originalRuntimeDockerClient
+	}()
+
+	docker, err := dockerapi.NewClient("unix:///tmp/registrator-missing-docker.sock")
+	if err != nil {
+		t.Fatalf("failed to create docker client: %v", err)
+	}
+
+	runtimeConfig = RuntimeConfig{
+		Mode:              "local",
+		Port:              8500,
+		UseDockerResolve:  true,
+		RequireLocalAgent: true,
+	}
+	runtimeDockerClient = docker
+
+	adapter := &ConsulAdapter{
+		baseConfig: &consulapi.Config{Address: "127.0.0.1:8500"},
+	}
+
+	address, err := adapter.resolveAddress(nil)
+	assert.Error(t, err)
+	assert.Empty(t, address)
+	assert.Contains(t, err.Error(), "strict local agent resolution failed")
+}
+
+func TestStrictLocalReadiness(t *testing.T) {
+	const agentMemberFailed = 4
+
+	originalRuntimeConfig := runtimeConfig
+	originalRuntimeDockerClient := runtimeDockerClient
+	defer func() {
+		runtimeConfig = originalRuntimeConfig
+		runtimeDockerClient = originalRuntimeDockerClient
+	}()
+
+	tests := []struct {
+		name           string
+		leader         string
+		role           string
+		memberAddress  string
+		memberStatus   int
+		catalogNode    bool
+		catalogAddress string
+		errorContains  string
+	}{
+		{name: "ready", leader: "100.101.0.1:8300", role: "node", memberAddress: "100.101.0.3", memberStatus: agentMemberAlive, catalogNode: true, catalogAddress: "100.101.0.3"},
+		{name: "empty leader", role: "node", memberAddress: "100.101.0.3", memberStatus: agentMemberAlive, catalogNode: true, catalogAddress: "100.101.0.3", errorContains: "no current leader"},
+		{name: "server role", leader: "100.101.0.1:8300", role: "consul", memberAddress: "100.101.0.3", memberStatus: agentMemberAlive, catalogNode: true, catalogAddress: "100.101.0.3", errorContains: "expected \"node\""},
+		{name: "wrong address", leader: "100.101.0.1:8300", role: "node", memberAddress: "100.101.0.2", memberStatus: agentMemberAlive, catalogNode: true, catalogAddress: "100.101.0.2", errorContains: "does not match swarm node address"},
+		{name: "failed member", leader: "100.101.0.1:8300", role: "node", memberAddress: "100.101.0.3", memberStatus: agentMemberFailed, catalogNode: true, catalogAddress: "100.101.0.3", errorContains: "is not alive"},
+		{name: "missing catalog node", leader: "100.101.0.1:8300", role: "node", memberAddress: "100.101.0.3", memberStatus: agentMemberAlive, errorContains: "is not present in the catalog"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/v1/status/leader":
+					_ = json.NewEncoder(w).Encode(tt.leader)
+				case r.URL.Path == "/v1/agent/self":
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{
+						"Config": map[string]interface{}{"NodeName": "agent-node-3"},
+						"Member": map[string]interface{}{
+							"Name":   "agent-node-3",
+							"Addr":   tt.memberAddress,
+							"Status": tt.memberStatus,
+							"Tags":   map[string]string{"role": tt.role},
+						},
+					})
+				case r.URL.Path == "/v1/catalog/node/agent-node-3":
+					if !tt.catalogNode {
+						_ = json.NewEncoder(w).Encode(nil)
+						return
+					}
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{
+						"Node": map[string]interface{}{
+							"Node":    "agent-node-3",
+							"Address": tt.catalogAddress,
+						},
+						"Services": map[string]interface{}{},
+					})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+
+			u, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatalf("failed to parse server URL: %v", err)
+			}
+			runtimeConfig = RuntimeConfig{
+				Mode:              "local",
+				Address:           u.Host,
+				Port:              8500,
+				RequireLocalAgent: true,
+				LocalNodeAddress:  "100.101.0.3",
+			}
+			adapter := &ConsulAdapter{baseConfig: &consulapi.Config{Address: u.Host, Scheme: u.Scheme}}
+
+			err = adapter.Ping()
+			if tt.errorContains == "" {
+				assert.NoError(t, err)
+				return
+			}
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errorContains)
+		})
+	}
+}
+
 func TestBuildCheckUsesCheckHTTPPortOverride(t *testing.T) {
 	adapter := &ConsulAdapter{}
 	service := &bridge.Service{

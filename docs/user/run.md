@@ -140,6 +140,7 @@ Variable | Default | Description
 `REGISTRATOR_DISCOVERY_ADDRESS` | _(empty)_ | Backend address override
 `REGISTRATOR_DISCOVERY_PORT` | `8500` | Backend port
 `REGISTRATOR_DISCOVERY_SERVICE_NAME` | `consul` | Backend service name in `service` mode
+`REGISTRATOR_DISCOVERY_REQUIRE_LOCAL_AGENT` | `false` | Require a healthy local Consul client on the current Swarm node
 `REGISTRATOR_DOCKER_ENDPOINT` | `unix:///var/run/docker.sock` | Docker API endpoint
 `REGISTRATOR_STATUS_ADDR` | _(empty)_ | Status endpoint listen address
 `REGISTRATOR_STATUS_TOKEN` | _(empty)_ | Status endpoint token

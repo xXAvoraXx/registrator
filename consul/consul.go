@@ -1,8 +1,10 @@
 package consul
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/url"
 	"os"
 	"sort"
@@ -36,15 +38,19 @@ func (r *ConsulAdapter) interpolateService(script string, service *bridge.Servic
 type Factory struct{}
 
 type RuntimeConfig struct {
-	Mode             string
-	Address          string
-	Port             int
-	ServiceName      string
-	UseDockerResolve bool
+	Mode              string
+	Address           string
+	Port              int
+	ServiceName       string
+	UseDockerResolve  bool
+	RequireLocalAgent bool
+	LocalNodeAddress  string
 }
 
 var runtimeDockerClient *dockerapi.Client
 var runtimeConfig RuntimeConfig
+
+const agentMemberAlive = 1
 
 func ConfigureRuntime(docker *dockerapi.Client, cfg RuntimeConfig) {
 	runtimeDockerClient = docker
@@ -93,9 +99,75 @@ func (r *ConsulAdapter) Ping() error {
 	if err != nil {
 		return err
 	}
-	log.Println("consul: current leader ", leader)
+	if strings.TrimSpace(leader) == "" {
+		return fmt.Errorf("consul: no current leader")
+	}
+	if runtimeConfig.Mode == "local" && runtimeConfig.RequireLocalAgent {
+		if err := validateLocalAgentReadiness(client, runtimeConfig.LocalNodeAddress); err != nil {
+			return err
+		}
+	}
 
 	return nil
+}
+
+func validateLocalAgentReadiness(client *consulapi.Client, expectedAddress string) error {
+	self, err := client.Agent().Self()
+	if err != nil {
+		return fmt.Errorf("consul: local agent self check failed: %w", err)
+	}
+	payload, err := json.Marshal(self)
+	if err != nil {
+		return fmt.Errorf("consul: local agent self payload could not be encoded: %w", err)
+	}
+	var local struct {
+		Config struct {
+			NodeName string `json:"NodeName"`
+		} `json:"Config"`
+		Member consulapi.AgentMember `json:"Member"`
+	}
+	if err := json.Unmarshal(payload, &local); err != nil {
+		return fmt.Errorf("consul: local agent self payload could not be decoded: %w", err)
+	}
+	if local.Member.Name == "" {
+		return fmt.Errorf("consul: local agent member name is empty")
+	}
+	if local.Config.NodeName != "" && local.Config.NodeName != local.Member.Name {
+		return fmt.Errorf("consul: local agent node name mismatch: config=%q member=%q", local.Config.NodeName, local.Member.Name)
+	}
+	if local.Member.Status != agentMemberAlive {
+		return fmt.Errorf("consul: local agent %q is not alive: status=%d", local.Member.Name, local.Member.Status)
+	}
+	if role := local.Member.Tags["role"]; role != "node" {
+		return fmt.Errorf("consul: resolved agent %q has role %q, expected %q", local.Member.Name, role, "node")
+	}
+	if expectedAddress != "" && !sameAddress(local.Member.Addr, expectedAddress) {
+		return fmt.Errorf("consul: local agent %q address %q does not match swarm node address %q", local.Member.Name, local.Member.Addr, expectedAddress)
+	}
+
+	catalogNode, _, err := client.Catalog().Node(local.Member.Name, nil)
+	if err != nil {
+		return fmt.Errorf("consul: catalog lookup for local agent %q failed: %w", local.Member.Name, err)
+	}
+	if catalogNode == nil || catalogNode.Node == nil {
+		return fmt.Errorf("consul: local agent %q is not present in the catalog", local.Member.Name)
+	}
+	if catalogNode.Node.Node != local.Member.Name {
+		return fmt.Errorf("consul: catalog returned node %q for local agent %q", catalogNode.Node.Node, local.Member.Name)
+	}
+	if expectedAddress != "" && !sameAddress(catalogNode.Node.Address, expectedAddress) {
+		return fmt.Errorf("consul: catalog node %q address %q does not match swarm node address %q", local.Member.Name, catalogNode.Node.Address, expectedAddress)
+	}
+	return nil
+}
+
+func sameAddress(left, right string) bool {
+	leftIP := net.ParseIP(strings.TrimSpace(left))
+	rightIP := net.ParseIP(strings.TrimSpace(right))
+	if leftIP != nil && rightIP != nil {
+		return leftIP.Equal(rightIP)
+	}
+	return strings.EqualFold(strings.TrimSpace(left), strings.TrimSpace(right))
 }
 
 func (r *ConsulAdapter) Register(service *bridge.Service) error {
@@ -303,10 +375,16 @@ func (r *ConsulAdapter) resolveAddress(service *bridge.Service) (string, error) 
 			return withDefaultPort(runtimeConfig.Address), nil
 		}
 		if !runtimeConfig.UseDockerResolve || runtimeDockerClient == nil {
+			if runtimeConfig.RequireLocalAgent {
+				return "", fmt.Errorf("consul: strict local agent resolution requires Docker resolution")
+			}
 			return r.baseConfig.Address, nil
 		}
 		resolved, err := resolveLocalAgentAddress(runtimeDockerClient, service)
 		if err != nil {
+			if runtimeConfig.RequireLocalAgent {
+				return "", fmt.Errorf("consul: strict local agent resolution failed: %w", err)
+			}
 			if r.baseConfig.Address == "" {
 				return "", err
 			}

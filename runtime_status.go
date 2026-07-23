@@ -92,6 +92,49 @@ var discoveredManagerAddrState sync.Map
 
 const statusTokenHeader = "X-Registrator-Token"
 
+type backendProber interface {
+	Ping() error
+}
+
+type reconcileBackend interface {
+	backendProber
+	Sync(bool)
+}
+
+type runtimeMetrics struct {
+	eventsProcessed                uint64
+	reconcileRuns                  uint64
+	reconcileFailures              uint64
+	lastSuccessfulReconcileSeconds uint64
+	backendReady                   uint32
+}
+
+func (m *runtimeMetrics) setBackendReady(ready bool) {
+	var value uint32
+	if ready {
+		value = 1
+	}
+	atomic.StoreUint32(&m.backendReady, value)
+}
+
+func (m *runtimeMetrics) checkBackend(backend backendProber) error {
+	err := backend.Ping()
+	m.setBackendReady(err == nil)
+	return err
+}
+
+func (m *runtimeMetrics) reconcile(b reconcileBackend, quiet bool) bool {
+	if err := m.checkBackend(b); err != nil {
+		atomic.AddUint64(&m.reconcileFailures, 1)
+		log.Printf("reconcile skipped because backend is not ready: %v", err)
+		return false
+	}
+	b.Sync(quiet)
+	atomic.AddUint64(&m.reconcileRuns, 1)
+	atomic.StoreUint64(&m.lastSuccessfulReconcileSeconds, uint64(time.Now().Unix()))
+	return true
+}
+
 func (s swarmRuntime) peerInfo() peerInfo {
 	return peerInfo{
 		ServiceID:   s.SwarmServiceID,
@@ -105,23 +148,20 @@ func (s swarmRuntime) peerInfo() peerInfo {
 	}
 }
 
-func serveStatus(addr string, b *bridge.Bridge, runtime swarmRuntime, docker *dockerapi.Client, eventsProcessed *uint64, reconcileRuns *uint64, statusToken string) {
+func serveStatus(addr string, b *bridge.Bridge, runtime swarmRuntime, docker *dockerapi.Client, metrics *runtimeMetrics, statusToken string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
-		if err := b.Ping(); err != nil {
-			http.Error(w, err.Error(), http.StatusServiceUnavailable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	})
+	mux.HandleFunc("/readyz", readinessHandler(b, metrics))
 	mux.HandleFunc("/metrics", requireStatusToken(statusToken, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 		_, _ = fmt.Fprintf(w, "registrator_registered_services %d\n", b.ServiceCount())
-		_, _ = fmt.Fprintf(w, "registrator_events_processed_total %d\n", atomic.LoadUint64(eventsProcessed))
-		_, _ = fmt.Fprintf(w, "registrator_reconcile_runs_total %d\n", atomic.LoadUint64(reconcileRuns))
+		_, _ = fmt.Fprintf(w, "registrator_events_processed_total %d\n", atomic.LoadUint64(&metrics.eventsProcessed))
+		_, _ = fmt.Fprintf(w, "registrator_reconcile_runs_total %d\n", atomic.LoadUint64(&metrics.reconcileRuns))
+		_, _ = fmt.Fprintf(w, "registrator_reconcile_failures_total %d\n", atomic.LoadUint64(&metrics.reconcileFailures))
+		_, _ = fmt.Fprintf(w, "registrator_backend_ready %d\n", atomic.LoadUint32(&metrics.backendReady))
+		_, _ = fmt.Fprintf(w, "registrator_last_successful_reconcile_timestamp_seconds %d\n", atomic.LoadUint64(&metrics.lastSuccessfulReconcileSeconds))
 	}))
 	mux.HandleFunc("/peerinfo", requireStatusToken(statusToken, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -153,8 +193,7 @@ func serveStatus(addr string, b *bridge.Bridge, runtime swarmRuntime, docker *do
 		if info.Role != "manager" {
 			return
 		}
-		b.Sync(true)
-		atomic.AddUint64(reconcileRuns, 1)
+		metrics.reconcile(b, true)
 	})
 	server := &http.Server{
 		Addr:              addr,
@@ -164,6 +203,16 @@ func serveStatus(addr string, b *bridge.Bridge, runtime swarmRuntime, docker *do
 	}
 	if err := server.ListenAndServe(); err != nil {
 		log.Printf("status server stopped: %v", err)
+	}
+}
+
+func readinessHandler(backend backendProber, metrics *runtimeMetrics) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		if err := metrics.checkBackend(backend); err != nil {
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	dockerapi "github.com/fsouza/go-dockerclient"
 )
@@ -25,6 +26,7 @@ func (f fakeBackendProber) Ping() error {
 
 type fakeReconcileBackend struct {
 	err       error
+	syncErr   error
 	syncCalls int
 }
 
@@ -32,8 +34,9 @@ func (f *fakeReconcileBackend) Ping() error {
 	return f.err
 }
 
-func (f *fakeReconcileBackend) Sync(bool) {
+func (f *fakeReconcileBackend) Sync(bool) error {
 	f.syncCalls++
+	return f.syncErr
 }
 
 func TestDetectSwarmRuntimeReadsSwarmTaskLabels(t *testing.T) {
@@ -117,7 +120,7 @@ func TestStatusTokenMiddlewareRequiresToken(t *testing.T) {
 
 func TestReadinessHandlerTracksStrictBackendState(t *testing.T) {
 	metrics := &runtimeMetrics{}
-	handler := readinessHandler(fakeBackendProber{err: errors.New("local agent missing")}, metrics)
+	handler := readinessHandler(fakeBackendProber{err: errors.New("local agent missing")}, metrics, 0)
 
 	resp := httptest.NewRecorder()
 	handler(resp, httptest.NewRequest(http.MethodGet, "/readyz", nil))
@@ -128,7 +131,7 @@ func TestReadinessHandlerTracksStrictBackendState(t *testing.T) {
 		t.Fatalf("expected backend_ready=0, got %d", got)
 	}
 
-	handler = readinessHandler(fakeBackendProber{}, metrics)
+	handler = readinessHandler(fakeBackendProber{}, metrics, 0)
 	resp = httptest.NewRecorder()
 	handler(resp, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	if resp.Code != http.StatusOK {
@@ -136,6 +139,25 @@ func TestReadinessHandlerTracksStrictBackendState(t *testing.T) {
 	}
 	if got := atomic.LoadUint32(&metrics.backendReady); got != 1 {
 		t.Fatalf("expected backend_ready=1, got %d", got)
+	}
+}
+
+func TestReadinessHandlerRejectsStaleReconcile(t *testing.T) {
+	metrics := &runtimeMetrics{}
+	atomic.StoreUint64(&metrics.lastSuccessfulReconcileSeconds, uint64(time.Now().Add(-2*time.Minute).Unix()))
+	handler := readinessHandler(fakeBackendProber{}, metrics, time.Minute)
+
+	resp := httptest.NewRecorder()
+	handler(resp, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if resp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected stale reconcile to fail readiness, got %d", resp.Code)
+	}
+
+	atomic.StoreUint64(&metrics.lastSuccessfulReconcileSeconds, uint64(time.Now().Unix()))
+	resp = httptest.NewRecorder()
+	handler(resp, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected fresh reconcile to pass readiness, got %d", resp.Code)
 	}
 }
 
@@ -165,6 +187,23 @@ func TestReconcileMetricsTrackFailureAndRecovery(t *testing.T) {
 	}
 	if got := atomic.LoadUint64(&metrics.lastSuccessfulReconcileSeconds); got == 0 {
 		t.Fatal("expected successful reconcile timestamp")
+	}
+
+	backend.syncErr = errors.New("docker list timed out")
+	if metrics.reconcile(backend, true) {
+		t.Fatal("expected Docker sync error to fail reconcile")
+	}
+	if got := atomic.LoadUint64(&metrics.reconcileFailures); got != 2 {
+		t.Fatalf("expected backend and Docker failures to be counted, got %d", got)
+	}
+}
+
+func TestReconcileStaleAfterHasOneMinuteFloor(t *testing.T) {
+	if got := reconcileStaleAfter(30); got != time.Minute {
+		t.Fatalf("expected one-minute stale threshold, got %s", got)
+	}
+	if got := reconcileStaleAfter(90); got != 3*time.Minute {
+		t.Fatalf("expected twice the resync interval, got %s", got)
 	}
 }
 

@@ -24,6 +24,7 @@ const (
 	defaultDockerAPIVersion = "1.41"
 	managerRetryTimeout     = 5 * time.Second
 	peerInfoRequestTimeout  = 2 * time.Second
+	swarmAPIRequestTimeout  = 10 * time.Second
 )
 
 var lookupIP = net.LookupIP
@@ -76,7 +77,9 @@ func inspectSwarmService(docker *dockerapi.Client, serviceID string) (*swarmapi.
 	if err != nil {
 		return nil, err
 	}
-	result, err := client.ServiceInspect(context.Background(), serviceID, mobyclient.ServiceInspectOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), swarmAPIRequestTimeout)
+	defer cancel()
+	result, err := client.ServiceInspect(ctx, serviceID, mobyclient.ServiceInspectOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +91,9 @@ func inspectDockerInfo(docker *dockerapi.Client) (*system.Info, error) {
 	if err != nil {
 		return nil, err
 	}
-	result, err := client.Info(context.Background(), mobyclient.InfoOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), swarmAPIRequestTimeout)
+	defer cancel()
+	result, err := client.Info(ctx, mobyclient.InfoOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +214,9 @@ func (r *swarmPortResolver) inspectServiceLocal(serviceID string) (*swarmapi.Ser
 	if r.swarmClient == nil {
 		return nil, fmt.Errorf("swarm api client unavailable")
 	}
-	result, err := r.swarmClient.ServiceInspect(context.Background(), serviceID, mobyclient.ServiceInspectOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), swarmAPIRequestTimeout)
+	defer cancel()
+	result, err := r.swarmClient.ServiceInspect(ctx, serviceID, mobyclient.ServiceInspectOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +259,9 @@ func serviceHasPublishedPorts(service *swarmapi.Service) bool {
 func (r *swarmPortResolver) managerNodeAddrs() []string {
 	addrSet := make(map[string]struct{})
 	if r.swarmClient != nil {
-		nodes, err := r.swarmClient.NodeList(context.Background(), mobyclient.NodeListOptions{})
+		ctx, cancel := context.WithTimeout(context.Background(), swarmAPIRequestTimeout)
+		nodes, err := r.swarmClient.NodeList(ctx, mobyclient.NodeListOptions{})
+		cancel()
 		if err == nil {
 			for _, addr := range managerAddrsFromNodes(nodes.Items) {
 				addrSet[addr] = struct{}{}

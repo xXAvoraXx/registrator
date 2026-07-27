@@ -1,12 +1,49 @@
 package bridge
 
 import (
+	"errors"
 	"sort"
 	"testing"
+	"time"
 
 	dockerapi "github.com/fsouza/go-dockerclient"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestRetryStopsWithinConfiguredWindow(t *testing.T) {
+	previous := registryRetryMaxElapsedTime
+	registryRetryMaxElapsedTime = 20 * time.Millisecond
+	t.Cleanup(func() {
+		registryRetryMaxElapsedTime = previous
+	})
+
+	started := time.Now()
+	err := retry(func() error { return errors.New("backend unavailable") })
+	if err == nil {
+		t.Fatal("expected retry to return the backend error")
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("expected bounded retry, took %s", elapsed)
+	}
+}
+
+func TestServicePortPrefersNonIngressNetwork(t *testing.T) {
+	container := &dockerapi.Container{
+		Config:     &dockerapi.Config{},
+		HostConfig: &dockerapi.HostConfig{},
+		NetworkSettings: &dockerapi.NetworkSettings{
+			IPAddress: "10.0.0.9",
+			Networks: map[string]dockerapi.ContainerNetwork{
+				"ingress":         {IPAddress: "10.0.0.9"},
+				"dokploy-network": {IPAddress: "10.0.1.51"},
+			},
+		},
+	}
+
+	port := servicePort(container, dockerapi.Port("8080/tcp"), nil)
+	assert.Equal(t, "10.0.1.51", port.ExposedIP)
+	assert.Equal(t, []string{"dokploy-network"}, port.NetworkNames)
+}
 
 func TestEscapedComma(t *testing.T) {
 	cases := []struct {

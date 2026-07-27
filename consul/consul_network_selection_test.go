@@ -333,3 +333,16 @@ func TestServicesDoesNotMarkExistingServiceCheckForRepair(t *testing.T) {
 		assert.Empty(t, services[0].Attrs[missingServiceCheckAttr])
 	}
 }
+
+func TestFactoryConfiguresBoundedHTTPTimeout(t *testing.T) {
+	uri, err := url.Parse("consul://127.0.0.1:8500")
+	assert.NoError(t, err)
+
+	adapter, ok := (&Factory{}).New(uri).(*ConsulAdapter)
+	if !ok {
+		t.Fatal("expected Consul adapter")
+	}
+	if assert.NotNil(t, adapter.baseConfig.HttpClient) {
+		assert.Equal(t, consulRequestTimeout, adapter.baseConfig.HttpClient.Timeout)
+	}
+}

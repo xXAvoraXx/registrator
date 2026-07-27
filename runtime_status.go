@@ -98,7 +98,7 @@ type backendProber interface {
 
 type reconcileBackend interface {
 	backendProber
-	Sync(bool)
+	Sync(bool) error
 }
 
 type runtimeMetrics struct {
@@ -106,7 +106,9 @@ type runtimeMetrics struct {
 	reconcileRuns                  uint64
 	reconcileFailures              uint64
 	lastSuccessfulReconcileSeconds uint64
+	reconcileStartedSeconds        uint64
 	backendReady                   uint32
+	reconcileInProgress            uint32
 }
 
 func (m *runtimeMetrics) setBackendReady(ready bool) {
@@ -124,15 +126,60 @@ func (m *runtimeMetrics) checkBackend(backend backendProber) error {
 }
 
 func (m *runtimeMetrics) reconcile(b reconcileBackend, quiet bool) bool {
+	if !atomic.CompareAndSwapUint32(&m.reconcileInProgress, 0, 1) {
+		log.Println("reconcile skipped because another reconcile is still running")
+		return false
+	}
+	atomic.StoreUint64(&m.reconcileStartedSeconds, uint64(time.Now().Unix()))
+	defer atomic.StoreUint32(&m.reconcileInProgress, 0)
+
 	if err := m.checkBackend(b); err != nil {
 		atomic.AddUint64(&m.reconcileFailures, 1)
 		log.Printf("reconcile skipped because backend is not ready: %v", err)
 		return false
 	}
-	b.Sync(quiet)
+	if err := b.Sync(quiet); err != nil {
+		atomic.AddUint64(&m.reconcileFailures, 1)
+		log.Printf("reconcile failed: %v", err)
+		return false
+	}
 	atomic.AddUint64(&m.reconcileRuns, 1)
 	atomic.StoreUint64(&m.lastSuccessfulReconcileSeconds, uint64(time.Now().Unix()))
 	return true
+}
+
+func reconcileStaleAfter(resyncIntervalSeconds int) time.Duration {
+	if resyncIntervalSeconds <= 0 {
+		return 0
+	}
+	maxAge := 2 * time.Duration(resyncIntervalSeconds) * time.Second
+	if maxAge < time.Minute {
+		return time.Minute
+	}
+	return maxAge
+}
+
+func (m *runtimeMetrics) checkReconcileFreshness(maxAge time.Duration) error {
+	if maxAge <= 0 {
+		return nil
+	}
+	now := time.Now()
+	lastSuccess := atomic.LoadUint64(&m.lastSuccessfulReconcileSeconds)
+	if lastSuccess == 0 {
+		return fmt.Errorf("no successful reconcile completed")
+	}
+	if age := now.Sub(time.Unix(int64(lastSuccess), 0)); age > maxAge {
+		return fmt.Errorf("last successful reconcile is stale: %s", age.Round(time.Second))
+	}
+	if atomic.LoadUint32(&m.reconcileInProgress) == 1 {
+		started := atomic.LoadUint64(&m.reconcileStartedSeconds)
+		if started > 0 {
+			if age := now.Sub(time.Unix(int64(started), 0)); age > maxAge {
+				return fmt.Errorf("reconcile has been running too long: %s", age.Round(time.Second))
+			}
+		}
+	}
+	return nil
 }
 
 func (s swarmRuntime) peerInfo() peerInfo {
@@ -148,18 +195,19 @@ func (s swarmRuntime) peerInfo() peerInfo {
 	}
 }
 
-func serveStatus(addr string, b *bridge.Bridge, runtime swarmRuntime, docker *dockerapi.Client, metrics *runtimeMetrics, statusToken string) {
+func serveStatus(addr string, b *bridge.Bridge, runtime swarmRuntime, docker *dockerapi.Client, metrics *runtimeMetrics, reconcileMaxAge time.Duration, statusToken string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	mux.HandleFunc("/readyz", readinessHandler(b, metrics))
+	mux.HandleFunc("/readyz", readinessHandler(b, metrics, reconcileMaxAge))
 	mux.HandleFunc("/metrics", requireStatusToken(statusToken, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 		_, _ = fmt.Fprintf(w, "registrator_registered_services %d\n", b.ServiceCount())
 		_, _ = fmt.Fprintf(w, "registrator_events_processed_total %d\n", atomic.LoadUint64(&metrics.eventsProcessed))
 		_, _ = fmt.Fprintf(w, "registrator_reconcile_runs_total %d\n", atomic.LoadUint64(&metrics.reconcileRuns))
 		_, _ = fmt.Fprintf(w, "registrator_reconcile_failures_total %d\n", atomic.LoadUint64(&metrics.reconcileFailures))
+		_, _ = fmt.Fprintf(w, "registrator_reconcile_in_progress %d\n", atomic.LoadUint32(&metrics.reconcileInProgress))
 		_, _ = fmt.Fprintf(w, "registrator_backend_ready %d\n", atomic.LoadUint32(&metrics.backendReady))
 		_, _ = fmt.Fprintf(w, "registrator_last_successful_reconcile_timestamp_seconds %d\n", atomic.LoadUint64(&metrics.lastSuccessfulReconcileSeconds))
 	}))
@@ -206,9 +254,13 @@ func serveStatus(addr string, b *bridge.Bridge, runtime swarmRuntime, docker *do
 	}
 }
 
-func readinessHandler(backend backendProber, metrics *runtimeMetrics) http.HandlerFunc {
+func readinessHandler(backend backendProber, metrics *runtimeMetrics, reconcileMaxAge time.Duration) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		if err := metrics.checkBackend(backend); err != nil {
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		if err := metrics.checkReconcileFreshness(reconcileMaxAge); err != nil {
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
 		}

@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	dockerapi "github.com/fsouza/go-dockerclient"
 	"github.com/gliderlabs/registrator/bridge"
@@ -20,6 +22,7 @@ import (
 const (
 	DefaultInterval         = "10s"
 	missingServiceCheckAttr = "registrator_check_missing"
+	consulRequestTimeout    = 10 * time.Second
 )
 
 func init() {
@@ -81,6 +84,12 @@ func (f *Factory) New(uri *url.URL) bridge.RegistryAdapter {
 	} else if uri.Host != "" {
 		config.Address = uri.Host
 	}
+	httpClient := config.HttpClient
+	if httpClient == nil {
+		httpClient = &http.Client{Transport: config.Transport}
+	}
+	httpClient.Timeout = consulRequestTimeout
+	config.HttpClient = httpClient
 	return &ConsulAdapter{baseConfig: config}
 }
 

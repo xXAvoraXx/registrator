@@ -22,6 +22,8 @@ var versionChecker = usage.NewChecker("registrator", Version)
 
 var metrics runtimeMetrics
 
+const dockerOperationTimeout = 10 * time.Second
+
 func assert(err error) {
 	if err != nil {
 		log.Fatal(err)
@@ -46,6 +48,9 @@ func main() {
 		assert(errors.New("docker endpoint must be configured"))
 	}
 	docker, err := dockerapi.NewClient(cfg.Docker.Endpoint)
+	assert(err)
+	docker.SetTimeout(dockerOperationTimeout)
+	eventDocker, err := dockerapi.NewClient(cfg.Docker.Endpoint)
 	assert(err)
 
 	swarmInfo := detectSwarmRuntime(docker)
@@ -99,7 +104,7 @@ func main() {
 	}).Info("runtime swarm status")
 
 	if cfg.Runtime.StatusAddr != "" {
-		go serveStatus(cfg.Runtime.StatusAddr, b, swarmInfo, docker, &metrics, cfg.Runtime.StatusToken)
+		go serveStatus(cfg.Runtime.StatusAddr, b, swarmInfo, docker, &metrics, reconcileStaleAfter(cfg.Runtime.ResyncInterval), cfg.Runtime.StatusToken)
 	}
 
 	attempt := 0
@@ -130,8 +135,8 @@ func main() {
 	}
 
 	// Start event listener before listing containers to avoid missing anything
-	events := make(chan *dockerapi.APIEvents)
-	assert(docker.AddEventListener(events))
+	events := make(chan *dockerapi.APIEvents, 256)
+	assert(eventDocker.AddEventListener(events))
 	log.Println("Listening for Docker events ...")
 
 	metrics.reconcile(b, false)
@@ -177,15 +182,15 @@ func main() {
 		atomic.AddUint64(&metrics.eventsProcessed, 1)
 		switch msg.Status {
 		case "start":
-			go b.Add(msg.ID)
+			b.Add(msg.ID)
 		case "die":
-			go b.RemoveOnExit(msg.ID)
+			b.RemoveOnExit(msg.ID)
 		case "stop", "pause", "destroy":
-			go b.Remove(msg.ID)
+			b.Remove(msg.ID)
 		case "unpause", "health_status: healthy", "health_status:healthy":
-			go b.Add(msg.ID)
+			b.Add(msg.ID)
 		case "health_status: unhealthy", "health_status:unhealthy":
-			go b.RemoveOnExit(msg.ID)
+			b.RemoveOnExit(msg.ID)
 		}
 	}
 

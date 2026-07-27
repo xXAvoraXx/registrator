@@ -9,8 +9,57 @@ Dokploy and are not part of this stack.
 - Pin both Consul and Registrator images by digest.
 - Preserve the existing `consul-agent-data` local volume.
 - Remove the standalone agent before enabling the matching Swarm task.
+- Use Registrator as the only writer for application service registrations.
+- Merge the matching file under `applications/` into the existing Dokploy
+  environment; never replace the complete environment or secret values.
+- Merge `consul-kv-registrator-owner.patch.json` structurally into each
+  application's existing Consul KV JSON; never replace the complete value.
+- Require exactly one passing, `registrator`-tagged catalog record for each
+  migrated application service before continuing.
 - Migrate and validate one production node at a time.
 - Never deploy production without explicit approval.
+
+## Application registration ownership
+
+`consul-kv-registrator-owner.patch.json` disables Steeltoe writes while keeping
+Consul reads enabled with passing-only queries. The application environment
+files opt the intended HTTP port back into Registrator despite the existing
+generic `SERVICE_IGNORE` setting. The gRPC service already has the required
+port-specific Swarm labels and needs no environment patch.
+
+Back up and structurally merge the patch into these keys:
+
+1. `sync-service/appsettings.json`
+2. `business-service/appsettings.json`
+3. `business-service/appsettings-admin.json`
+4. `admin-service/appsettings.json`
+5. `Gateway/appsettings.json`
+
+Redeploy the affected application after changing its KV value. Environment
+variables alone are insufficient because the current application configuration
+order allows the Consul KV value to win.
+
+Apply one application at a time in this order:
+
+1. `sync-service`
+2. `business-service`
+3. `business-service-grpc` using its existing Swarm labels
+4. `admin-service`
+5. `gateway`
+
+After each deployment, verify:
+
+- the old Steeltoe-generated service ID is absent;
+- exactly one Registrator-owned service ID is present;
+- the check is `passing` and includes a one-minute critical deregistration
+  timeout where the application metadata declares it;
+- `/readyz` is `200`;
+- the application smoke test succeeds.
+
+Rollback an application by restoring both its encrypted Consul KV backup and
+Dokploy environment snapshot, then redeploying its previous immutable image.
+Remove a legacy registration only after its Registrator-owned replacement is
+passing and application smoke tests succeed.
 
 ## Test rollout
 

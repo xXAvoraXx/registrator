@@ -24,8 +24,10 @@ Dokploy and are not part of this stack.
 `consul-kv-registrator-owner.patch.json` disables Steeltoe writes while keeping
 Consul reads enabled with passing-only queries. The application environment
 files opt the intended HTTP port back into Registrator despite the existing
-generic `SERVICE_IGNORE` setting. The gRPC service already has the required
-port-specific Swarm labels and needs no environment patch.
+generic `SERVICE_IGNORE` setting. They also replace the old standalone-agent
+hostname: application-node services use `consul-agent-application`, while
+management services use `consul-agent-management`. The gRPC service uses its
+own `business-service-grpc.env` snippet for the same reason.
 
 Back up and structurally merge the patch into these keys:
 

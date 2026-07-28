@@ -30,6 +30,16 @@ groups:
           summary: Registrator reconciliation failed
           description: At least one reconciliation was skipped because the local backend was not ready.
 
+      - alert: RegistratorRestartLoop
+        expr: changes(up{job="registrator_metrics"}[5m]) > 2
+        for: 1m
+        labels:
+          severity: critical
+          environment: test
+        annotations:
+          summary: Registrator is repeatedly restarting
+          description: The test Registrator metrics target has changed availability more than twice in five minutes.
+
       - alert: TestSsoUnavailable
         expr: probe_success{job="test_sso_health"} == 0 or probe_http_status_code{job="test_sso_health"} >= 500
         for: 1m

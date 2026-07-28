@@ -57,7 +57,7 @@ func TestAddRegistersSwarmPortPerNetwork(t *testing.T) {
 				"NetworkSettings": map[string]interface{}{
 					"IPAddress": "10.0.1.200",
 					"Networks": map[string]interface{}{
-						"dokploy-network": map[string]interface{}{"IPAddress": "10.0.1.200"},
+						"dokploy-network":     map[string]interface{}{"IPAddress": "10.0.1.200"},
 						"registrator-network": map[string]interface{}{"IPAddress": "10.0.2.200"},
 					},
 					"Ports": map[string]interface{}{},
@@ -103,7 +103,7 @@ func TestAddRegistersSwarmPortPerNetwork(t *testing.T) {
 	require.Len(t, b.services[containerID], 2)
 
 	networkTagCounts := map[string]int{
-		"dokploy-network":    0,
+		"dokploy-network":     0,
 		"registrator-network": 0,
 	}
 	ids := make(map[string]struct{}, len(registry.registered))
@@ -120,4 +120,71 @@ func TestAddRegistersSwarmPortPerNetwork(t *testing.T) {
 	assert.Len(t, ids, 2)
 	assert.Equal(t, 1, networkTagCounts["dokploy-network"])
 	assert.Equal(t, 1, networkTagCounts["registrator-network"])
+}
+
+func TestAddReplacesGenericPortWithResolvedSwarmNetwork(t *testing.T) {
+	containerID := "2234567890123456789012345678901234567890123456789012345678901234"
+	dockerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/version"):
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"ApiVersion": "1.41"})
+		case strings.Contains(r.URL.Path, "/containers/"+containerID+"/json"):
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"Id":   containerID,
+				"Name": "/applications-gateway.1.taskid",
+				"Config": map[string]interface{}{
+					"Image": "gateway:latest",
+					"ExposedPorts": map[string]interface{}{
+						"8080/tcp": map[string]interface{}{},
+					},
+					"Env": []string{"SERVICE_8080_NAME=gateway"},
+					"Labels": map[string]interface{}{
+						"com.docker.swarm.node.id": "node-local",
+					},
+				},
+				"HostConfig": map[string]interface{}{"NetworkMode": "bridge"},
+				"NetworkSettings": map[string]interface{}{
+					"IPAddress": "10.0.0.9",
+					"Networks": map[string]interface{}{
+						"ingress":         map[string]interface{}{"IPAddress": "10.0.0.9"},
+						"dokploy-network": map[string]interface{}{"IPAddress": "10.0.1.51"},
+					},
+					"Ports": map[string]interface{}{},
+				},
+				"State": map[string]interface{}{"Running": true},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer dockerServer.Close()
+
+	docker, err := dockerapi.NewVersionedClient(dockerServer.URL, "1.41")
+	require.NoError(t, err)
+	registry := &captureRegistryAdapter{}
+	b := &Bridge{
+		docker:   docker,
+		registry: registry,
+		config: Config{
+			Internal:    true,
+			LocalNodeID: "node-local",
+			ResolveSwarm: func(container *dockerapi.Container) ([]ServicePort, error) {
+				resolved := NewResolvedServicePort(container, "100.101.1.1", "8000", "8080", "tcp")
+				resolved.ExposedIP = "10.0.1.51"
+				resolved.NetworkNames = []string{"dokploy-network"}
+				return []ServicePort{resolved}, nil
+			},
+		},
+		services:       map[string][]*Service{},
+		serviceHashes:  map[string]string{},
+		deadContainers: map[string]*DeadContainer{},
+	}
+
+	b.Add(containerID)
+
+	require.Len(t, registry.registered, 1)
+	require.Len(t, b.services[containerID], 1)
+	assert.Equal(t, "10.0.1.51", registry.registered[0].IP)
+	assert.Equal(t, []string{"dokploy-network", registratorManagedTag}, registry.registered[0].Tags)
+	assert.NotContains(t, registry.registered[0].Tags, "ingress")
 }

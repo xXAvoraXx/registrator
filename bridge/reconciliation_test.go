@@ -299,6 +299,47 @@ func TestSyncRetainsExactDesiredServiceWithoutDuplicateRegister(t *testing.T) {
 	assert.Equal(t, existing.ID, b.services[containerID][0].ID)
 }
 
+func TestSyncReregistersServicesAfterRegistryStateLoss(t *testing.T) {
+	containerID := "3634567890123456789012345678901234567890123456789012345678901234"
+	containerName := "app.1.task"
+	docker, closeServer := newReconcileDockerClient(t,
+		map[string]map[string]interface{}{
+			containerID: reconcileContainerPayload(containerID, containerName, "example/app:latest", "10.0.1.20", "", ""),
+		},
+		[]map[string]interface{}{reconcileListing(containerID, containerName)},
+	)
+	defer closeServer()
+
+	existing := &Service{
+		ID:    "worker-hostname:app.1.task:3000",
+		Name:  "app",
+		IP:    "10.0.1.20",
+		Port:  3000,
+		Tags:  []string{"app", registratorManagedTag},
+		Attrs: ownershipAttrsForTest("worker-hostname", "", containerID, containerName),
+	}
+	registry := &reconcileRegistryAdapter{services: []*Service{existing}}
+	b := &Bridge{
+		docker:         docker,
+		localHostname:  "worker-hostname",
+		registry:       registry,
+		config:         Config{Cleanup: true, Internal: true},
+		services:       map[string][]*Service{},
+		serviceHashes:  map[string]string{},
+		deadContainers: map[string]*DeadContainer{},
+	}
+
+	b.Sync(true)
+	assert.Empty(t, registry.registered)
+
+	registry.services = nil
+	b.Sync(true)
+
+	assert.Equal(t, []string{existing.ID}, serviceIDsForTest(registry.registered))
+	require.Len(t, registry.services, 1)
+	assert.Equal(t, existing.ID, registry.services[0].ID)
+}
+
 func TestSyncRemovesDuplicateLocalServiceAndKeepsDesiredID(t *testing.T) {
 	containerID := "4234567890123456789012345678901234567890123456789012345678901234"
 	containerName := "app.1.task"

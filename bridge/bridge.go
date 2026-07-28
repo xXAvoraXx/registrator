@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"text/template"
 	"time"
 
@@ -40,6 +41,7 @@ type Bridge struct {
 	services       map[string][]*Service
 	serviceHashes  map[string]string
 	deadContainers map[string]*DeadContainer
+	serviceCount   int64
 	config         Config
 }
 
@@ -113,16 +115,16 @@ func (b *Bridge) Refresh() {
 	}
 }
 
-func (b *Bridge) Sync(quiet bool) {
+func (b *Bridge) Sync(quiet bool) error {
 	b.Lock()
 	defer b.Unlock()
 
 	containers, err := b.docker.ListContainers(dockerapi.ListContainersOptions{})
-	if err != nil && quiet {
-		log.Println("error listing containers, skipping sync")
-		return
-	} else if err != nil && !quiet {
-		log.Fatal(err)
+	if err != nil {
+		if quiet {
+			log.Println("error listing containers, skipping sync:", err)
+		}
+		return fmt.Errorf("list containers: %w", err)
 	}
 
 	log.Printf("Syncing services on %d containers", len(containers))
@@ -169,7 +171,7 @@ func (b *Bridge) Sync(quiet bool) {
 		nonExitedContainers, err := b.docker.ListContainers(dockerapi.ListContainersOptions{Filters: filters})
 		if err != nil {
 			log.Println("error listing nonExitedContainers, skipping sync", err)
-			return
+			return fmt.Errorf("list non-exited containers: %w", err)
 		}
 		runningContainerIPs := b.runningContainerIPs(nonExitedContainers)
 		type staleRemoval struct {
@@ -210,7 +212,7 @@ func (b *Bridge) Sync(quiet bool) {
 		extServices, err := b.registry.Services()
 		if err != nil {
 			log.Println("cleanup failed:", err)
-			return
+			return fmt.Errorf("list backend services for cleanup: %w", err)
 		}
 		preferredIDs := b.currentServiceIDs()
 		localHostIdentities := b.localHostIdentities()
@@ -268,9 +270,12 @@ func (b *Bridge) Sync(quiet bool) {
 			log.Println(extService.ID, "removed")
 		}
 	}
+	return nil
 }
 
 func (b *Bridge) add(containerId string, quiet bool) {
+	defer b.updateServiceCountLocked()
+
 	if d := b.deadContainers[containerId]; d != nil {
 		delete(b.deadContainers, containerId)
 	}
@@ -309,7 +314,14 @@ func (b *Bridge) add(containerId string, quiet bool) {
 			}
 		} else {
 			for _, resolved := range swarmPorts {
-				key := fmt.Sprintf("%s/%s", resolved.ExposedPort, resolved.PortType)
+				baseKey := fmt.Sprintf("%s/%s", resolved.ExposedPort, resolved.PortType)
+				if len(resolved.NetworkNames) > 0 {
+					// Swarm network instances are authoritative for this port.
+					// Keeping the generic entry makes the final address depend
+					// on Go map iteration order.
+					delete(ports, baseKey)
+				}
+				key := baseKey
 				if len(resolved.NetworkNames) > 0 {
 					key = fmt.Sprintf("%s@%s", key, strings.Join(resolved.NetworkNames, ","))
 				}
@@ -844,6 +856,8 @@ func (b *Bridge) remove(containerId string, deregister bool) {
 }
 
 func (b *Bridge) removeLocked(containerId string, deregister bool) {
+	defer b.updateServiceCountLocked()
+
 	if deregister {
 		deregisterAll := func(services []*Service) {
 			for _, service := range services {
@@ -928,13 +942,15 @@ func (b *Bridge) cleanupReplacedRegistrations(desired *Service) {
 }
 
 func (b *Bridge) ServiceCount() int {
-	b.Lock()
-	defer b.Unlock()
+	return int(atomic.LoadInt64(&b.serviceCount))
+}
+
+func (b *Bridge) updateServiceCountLocked() {
 	count := 0
 	for _, services := range b.services {
 		count += len(services)
 	}
-	return count
+	atomic.StoreInt64(&b.serviceCount, int64(count))
 }
 
 func (b *Bridge) seedServiceHashes(services []*Service) {

@@ -20,12 +20,13 @@ const (
 
 type AppConfig struct {
 	Discovery struct {
-		Provider         string `json:"provider" yaml:"provider"`
-		Mode             string `json:"mode" yaml:"mode"`
-		Address          string `json:"address" yaml:"address"`
-		Port             int    `json:"port" yaml:"port"`
-		ServiceName      string `json:"serviceName" yaml:"serviceName"`
-		UseDockerResolve bool   `json:"useDockerResolve" yaml:"useDockerResolve"`
+		Provider          string `json:"provider" yaml:"provider"`
+		Mode              string `json:"mode" yaml:"mode"`
+		Address           string `json:"address" yaml:"address"`
+		Port              int    `json:"port" yaml:"port"`
+		ServiceName       string `json:"serviceName" yaml:"serviceName"`
+		UseDockerResolve  bool   `json:"useDockerResolve" yaml:"useDockerResolve"`
+		RequireLocalAgent bool   `json:"requireLocalAgent" yaml:"requireLocalAgent"`
 	} `json:"discovery" yaml:"discovery"`
 	Service struct {
 		NameSource string `json:"nameSource" yaml:"nameSource"`
@@ -126,6 +127,7 @@ func applyCLIOverrides(cfg *AppConfig, args []string) error {
 	discoveryPort := fs.Int("REGISTRATOR_DISCOVERY_PORT", cfg.Discovery.Port, "")
 	discoveryServiceName := fs.String("REGISTRATOR_DISCOVERY_SERVICE_NAME", cfg.Discovery.ServiceName, "")
 	discoveryUseDockerResolve := fs.Bool("REGISTRATOR_DISCOVERY_USE_DOCKER_RESOLVE", cfg.Discovery.UseDockerResolve, "")
+	discoveryRequireLocalAgent := fs.Bool("REGISTRATOR_DISCOVERY_REQUIRE_LOCAL_AGENT", cfg.Discovery.RequireLocalAgent, "")
 	serviceNameSource := fs.String("REGISTRATOR_SERVICE_NAME_SOURCE", cfg.Service.NameSource, "")
 	serviceLabelKey := fs.String("REGISTRATOR_SERVICE_LABEL_KEY", cfg.Service.LabelKey, "")
 	serviceIDFormat := fs.String("REGISTRATOR_SERVICE_ID_FORMAT", cfg.Service.IDFormat, "")
@@ -169,6 +171,7 @@ func applyCLIOverrides(cfg *AppConfig, args []string) error {
 	cfg.Discovery.Port = *discoveryPort
 	cfg.Discovery.ServiceName = *discoveryServiceName
 	cfg.Discovery.UseDockerResolve = *discoveryUseDockerResolve
+	cfg.Discovery.RequireLocalAgent = *discoveryRequireLocalAgent
 	if !discoveryModeFlagProvided && serviceDiscoveryModeFlagProvided {
 		cfg.Discovery.Mode = *serviceDiscoveryMode
 	}
@@ -222,6 +225,9 @@ func applyEnvOverrides(cfg *AppConfig) {
 	}
 	if v := os.Getenv("REGISTRATOR_DISCOVERY_USE_DOCKER_RESOLVE"); v != "" {
 		cfg.Discovery.UseDockerResolve = strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("REGISTRATOR_DISCOVERY_REQUIRE_LOCAL_AGENT"); v != "" {
+		cfg.Discovery.RequireLocalAgent = strings.EqualFold(v, "true")
 	}
 	if v := os.Getenv("REGISTRATOR_SERVICE_NAME_SOURCE"); v != "" {
 		cfg.Service.NameSource = v

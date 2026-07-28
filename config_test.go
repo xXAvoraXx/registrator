@@ -11,6 +11,7 @@ func TestEnvOverridesConfigDefaults(t *testing.T) {
 	t.Setenv("REGISTRATOR_DISCOVERY_MODE", "service")
 	t.Setenv("REGISTRATOR_DISCOVERY_SERVICE_NAME", "consul-agent")
 	t.Setenv("REGISTRATOR_DISCOVERY_PORT", "8600")
+	t.Setenv("REGISTRATOR_DISCOVERY_REQUIRE_LOCAL_AGENT", "true")
 	t.Setenv("REGISTRATOR_SERVICE_NAME_SOURCE", "container.name")
 
 	cfg := defaultAppConfig()
@@ -19,6 +20,7 @@ func TestEnvOverridesConfigDefaults(t *testing.T) {
 	testassert.Equal(t, "service", cfg.Discovery.Mode)
 	testassert.Equal(t, "consul-agent", cfg.Discovery.ServiceName)
 	testassert.Equal(t, 8600, cfg.Discovery.Port)
+	testassert.True(t, cfg.Discovery.RequireLocalAgent)
 	testassert.Equal(t, "container.name", cfg.Service.NameSource)
 	testassert.Equal(t, "consul://consul-agent:8600", buildRegistryURI(cfg))
 }
@@ -77,6 +79,7 @@ func TestSecurityDefaultsPreserveExistingBehavior(t *testing.T) {
 	testassert.True(t, cfg.Runtime.AllowCheckScripts)
 	testassert.True(t, cfg.Runtime.AllowTemplateHTTPGet)
 	testassert.Empty(t, cfg.Runtime.StatusToken)
+	testassert.False(t, cfg.Discovery.RequireLocalAgent)
 }
 
 func TestCLIOverridesEnvAndConfig(t *testing.T) {
@@ -87,11 +90,12 @@ func TestCLIOverridesEnvAndConfig(t *testing.T) {
 	cfg := defaultAppConfig()
 	applyEnvOverrides(&cfg)
 
-	err := applyCLIOverrides(&cfg, []string{"-REGISTRATOR_RUNTIME_INTERNAL=true", "-REGISTRATOR_RUNTIME_RETRY_ATTEMPTS=2", "-REGISTRATOR_DISCOVERY_MODE=service", "-REGISTRATOR_RUNTIME_MANAGER_API_PORT=22345", "-REGISTRATOR_STATUS_TOKEN=cli-token", "-REGISTRATOR_RUNTIME_ALLOW_CHECK_SCRIPTS=false"})
+	err := applyCLIOverrides(&cfg, []string{"-REGISTRATOR_RUNTIME_INTERNAL=true", "-REGISTRATOR_RUNTIME_RETRY_ATTEMPTS=2", "-REGISTRATOR_DISCOVERY_MODE=service", "-REGISTRATOR_DISCOVERY_REQUIRE_LOCAL_AGENT=true", "-REGISTRATOR_RUNTIME_MANAGER_API_PORT=22345", "-REGISTRATOR_STATUS_TOKEN=cli-token", "-REGISTRATOR_RUNTIME_ALLOW_CHECK_SCRIPTS=false"})
 	testassert.NoError(t, err)
 	testassert.True(t, cfg.Runtime.Internal)
 	testassert.Equal(t, 2, cfg.Runtime.RetryAttempts)
 	testassert.Equal(t, "service", cfg.Discovery.Mode)
+	testassert.True(t, cfg.Discovery.RequireLocalAgent)
 	testassert.Equal(t, 22345, cfg.Runtime.ManagerAPIPort)
 	testassert.Equal(t, "cli-token", cfg.Runtime.StatusToken)
 	testassert.False(t, cfg.Runtime.AllowCheckScripts)

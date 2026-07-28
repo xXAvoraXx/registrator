@@ -1,0 +1,9 @@
+{
+  "Consul": {
+    "Discovery": {
+      "Register": false,
+      "Deregister": false,
+      "QueryPassing": true
+    }
+  }
+}

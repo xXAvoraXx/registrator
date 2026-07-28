@@ -1,6 +1,17 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [v7.5.0]() - 2026-07-23
+### Added
+- Strict local Consul agent discovery and readiness validation.
+- Separate liveness and readiness endpoints for local-agent deployments.
+- Backend readiness, reconciliation failure, and last-success metrics.
+- Declarative Superisletmem Consul client Swarm manifests.
+
+### Changed
+- Allow infinite backend startup retries with `retryAttempts=-1`.
+- Reconcile safely after a local Consul agent loses its catalog state.
+
 ## [v7.4.0]() - 2021-09-22
 ### Fixed
 - Minor code styling changes

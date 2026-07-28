@@ -89,6 +89,7 @@ discovery:
   port: 8500                      # default: 8500
   serviceName: consul             # default: consul
   useDockerResolve: true          # default: true
+  requireLocalAgent: false        # default: false
 service:
   nameSource: service.name        # default: service.name
   labelKey: service.name          # default: service.name
@@ -124,6 +125,8 @@ logging:
 Notes:
 
 - Set `runtime.retryAttempts: -1` for infinite retry behavior.
+- Set `discovery.requireLocalAgent: true` to reject fallback endpoints and
+  require a healthy local Consul client registered on the current Swarm node.
 - `service.idFormat` placeholders: `{hostname}`, `{name}`, `{port}`, `{protocol}`.
 - `runtime.refreshTTL` and `runtime.refreshInterval` are disabled when `0`.
 - `runtime.deregisterCheck` supports `always` and `on-success`.
@@ -158,6 +161,7 @@ Supported environment variables:
 | `REGISTRATOR_DISCOVERY_PORT` | `8500` | Discovery backend port. |
 | `REGISTRATOR_DISCOVERY_SERVICE_NAME` | `consul` | Discovery service name used in `service` mode. |
 | `REGISTRATOR_DISCOVERY_USE_DOCKER_RESOLVE` | `true` | Enables/disables Docker-based address resolution in `local` mode. |
+| `REGISTRATOR_DISCOVERY_REQUIRE_LOCAL_AGENT` | `false` | Requires the resolved local Consul agent to be alive, use the `node` role, match the Swarm node address, and exist in the catalog. |
 | `REGISTRATOR_SERVICE_NAME_SOURCE` | `service.name` | Service name source (label/metadata key). |
 | `REGISTRATOR_SERVICE_LABEL_KEY` | `service.name` | Default label key used to read service name. |
 | `REGISTRATOR_SERVICE_ID_FORMAT` | `{hostname}:{name}:{port}` | Format string for generated service IDs. |
@@ -184,6 +188,11 @@ Supported environment variables:
 | `CONSUL_CACERT` | _(empty)_ | CA certificate file path used in `consul-tls` mode. |
 | `CONSUL_CLIENT_CERT` | _(empty)_ | Client certificate file path used in `consul-tls` mode. |
 | `CONSUL_CLIENT_KEY` | _(empty)_ | Client private key file path used in `consul-tls` mode. |
+
+`/readyz` applies the strict local Consul checks when
+`REGISTRATOR_DISCOVERY_REQUIRE_LOCAL_AGENT=true`. `/healthz` remains a process
+liveness endpoint. Metrics include backend readiness, reconcile failures, and
+the timestamp of the last completed reconcile.
 
 ### Container/service metadata overrides (`SERVICE_*`)
 

@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cenkalti/backoff"
 	dockerapi "github.com/fsouza/go-dockerclient"
@@ -11,8 +12,12 @@ import (
 
 const registratorManagedTag = "registrator"
 
+var registryRetryMaxElapsedTime = 15 * time.Second
+
 func retry(fn func() error) error {
-	return backoff.Retry(fn, backoff.NewExponentialBackOff())
+	exp := backoff.NewExponentialBackOff()
+	exp.MaxElapsedTime = registryRetryMaxElapsedTime
+	return backoff.Retry(fn, exp)
 }
 
 func mapDefault(m map[string]string, key, default_ string) string {
@@ -181,18 +186,34 @@ func servicePort(container *dockerapi.Container, port dockerapi.Port, published 
 		ept = "tcp" // default
 	}
 
-	// Nir: support docker NetworkSettings
+	// Prefer a deterministic, routable application network over Swarm ingress.
 	eip = container.NetworkSettings.IPAddress
-	if eip == "" {
-		for _, network := range container.NetworkSettings.Networks {
-			eip = network.IPAddress
-		}
-	}
 	networkNames := make([]string, 0, len(container.NetworkSettings.Networks))
 	for networkName := range container.NetworkSettings.Networks {
+		if strings.EqualFold(networkName, "ingress") {
+			continue
+		}
 		networkNames = append(networkNames, networkName)
 	}
 	sort.Strings(networkNames)
+	for _, networkName := range networkNames {
+		if ip := container.NetworkSettings.Networks[networkName].IPAddress; ip != "" {
+			eip = ip
+			break
+		}
+	}
+	if len(networkNames) == 0 {
+		for networkName, network := range container.NetworkSettings.Networks {
+			if network.IPAddress == "" {
+				continue
+			}
+			networkNames = append(networkNames, networkName)
+			if eip == "" {
+				eip = network.IPAddress
+			}
+		}
+		sort.Strings(networkNames)
+	}
 
 	return ServicePort{
 		HostPort:          hp,

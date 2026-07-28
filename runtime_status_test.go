@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -10,9 +11,33 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	dockerapi "github.com/fsouza/go-dockerclient"
 )
+
+type fakeBackendProber struct {
+	err error
+}
+
+func (f fakeBackendProber) Ping() error {
+	return f.err
+}
+
+type fakeReconcileBackend struct {
+	err       error
+	syncErr   error
+	syncCalls int
+}
+
+func (f *fakeReconcileBackend) Ping() error {
+	return f.err
+}
+
+func (f *fakeReconcileBackend) Sync(bool) error {
+	f.syncCalls++
+	return f.syncErr
+}
 
 func TestDetectSwarmRuntimeReadsSwarmTaskLabels(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -90,6 +115,95 @@ func TestStatusTokenMiddlewareRequiresToken(t *testing.T) {
 	handler(resp, req)
 	if resp.Code != http.StatusNoContent {
 		t.Fatalf("expected accepted token, got %d", resp.Code)
+	}
+}
+
+func TestReadinessHandlerTracksStrictBackendState(t *testing.T) {
+	metrics := &runtimeMetrics{}
+	handler := readinessHandler(fakeBackendProber{err: errors.New("local agent missing")}, metrics, 0)
+
+	resp := httptest.NewRecorder()
+	handler(resp, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if resp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected unavailable readiness, got %d", resp.Code)
+	}
+	if got := atomic.LoadUint32(&metrics.backendReady); got != 0 {
+		t.Fatalf("expected backend_ready=0, got %d", got)
+	}
+
+	handler = readinessHandler(fakeBackendProber{}, metrics, 0)
+	resp = httptest.NewRecorder()
+	handler(resp, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected ready status, got %d", resp.Code)
+	}
+	if got := atomic.LoadUint32(&metrics.backendReady); got != 1 {
+		t.Fatalf("expected backend_ready=1, got %d", got)
+	}
+}
+
+func TestReadinessHandlerRejectsStaleReconcile(t *testing.T) {
+	metrics := &runtimeMetrics{}
+	atomic.StoreUint64(&metrics.lastSuccessfulReconcileSeconds, uint64(time.Now().Add(-2*time.Minute).Unix()))
+	handler := readinessHandler(fakeBackendProber{}, metrics, time.Minute)
+
+	resp := httptest.NewRecorder()
+	handler(resp, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if resp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected stale reconcile to fail readiness, got %d", resp.Code)
+	}
+
+	atomic.StoreUint64(&metrics.lastSuccessfulReconcileSeconds, uint64(time.Now().Unix()))
+	resp = httptest.NewRecorder()
+	handler(resp, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected fresh reconcile to pass readiness, got %d", resp.Code)
+	}
+}
+
+func TestReconcileMetricsTrackFailureAndRecovery(t *testing.T) {
+	metrics := &runtimeMetrics{}
+	backend := &fakeReconcileBackend{err: errors.New("local agent missing")}
+
+	if metrics.reconcile(backend, true) {
+		t.Fatal("expected reconcile to be skipped while backend is unavailable")
+	}
+	if backend.syncCalls != 0 {
+		t.Fatalf("expected no sync while unavailable, got %d", backend.syncCalls)
+	}
+	if got := atomic.LoadUint64(&metrics.reconcileFailures); got != 1 {
+		t.Fatalf("expected one reconcile failure, got %d", got)
+	}
+
+	backend.err = nil
+	if !metrics.reconcile(backend, true) {
+		t.Fatal("expected reconcile after backend recovery")
+	}
+	if backend.syncCalls != 1 {
+		t.Fatalf("expected one sync after recovery, got %d", backend.syncCalls)
+	}
+	if got := atomic.LoadUint64(&metrics.reconcileRuns); got != 1 {
+		t.Fatalf("expected one successful reconcile, got %d", got)
+	}
+	if got := atomic.LoadUint64(&metrics.lastSuccessfulReconcileSeconds); got == 0 {
+		t.Fatal("expected successful reconcile timestamp")
+	}
+
+	backend.syncErr = errors.New("docker list timed out")
+	if metrics.reconcile(backend, true) {
+		t.Fatal("expected Docker sync error to fail reconcile")
+	}
+	if got := atomic.LoadUint64(&metrics.reconcileFailures); got != 2 {
+		t.Fatalf("expected backend and Docker failures to be counted, got %d", got)
+	}
+}
+
+func TestReconcileStaleAfterHasOneMinuteFloor(t *testing.T) {
+	if got := reconcileStaleAfter(30); got != time.Minute {
+		t.Fatalf("expected one-minute stale threshold, got %s", got)
+	}
+	if got := reconcileStaleAfter(90); got != 3*time.Minute {
+		t.Fatalf("expected twice the resync interval, got %s", got)
 	}
 }
 

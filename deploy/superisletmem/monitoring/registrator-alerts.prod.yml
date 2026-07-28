@@ -1,0 +1,41 @@
+groups:
+  - name: registrator-production
+    rules:
+      - alert: RegistratorNodeReadinessDown
+        expr: probe_success{job="registrator_node_readiness"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          environment: production
+        annotations:
+          summary: Registrator is not ready on {{ $labels.instance }}
+          description: The node-local Registrator readiness probe has failed for more than one minute.
+
+      - alert: RegistratorBackendNotReady
+        expr: registrator_backend_ready{job="registrator_metrics"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          environment: production
+        annotations:
+          summary: Registrator cannot use its local Consul agent
+          description: Strict local Consul agent validation has failed for more than one minute.
+
+      - alert: RegistratorReconcileFailures
+        expr: increase(registrator_reconcile_failures_total{job="registrator_metrics"}[5m]) > 0
+        labels:
+          severity: warning
+          environment: production
+        annotations:
+          summary: Registrator reconciliation failed
+          description: At least one reconciliation was skipped because the local backend was not ready.
+
+      - alert: ProductionSsoUnavailable
+        expr: probe_success{job="production_sso_health"} == 0 or probe_http_status_code{job="production_sso_health"} >= 500
+        for: 1m
+        labels:
+          severity: critical
+          environment: production
+        annotations:
+          summary: Production SSO probe is failing
+          description: A production SSO route has been unavailable or returned a 5xx response for more than one minute.

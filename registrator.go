@@ -20,8 +20,9 @@ var Version string
 
 var versionChecker = usage.NewChecker("registrator", Version)
 
-var eventsProcessed uint64
-var reconcileRuns uint64
+var metrics runtimeMetrics
+
+const dockerOperationTimeout = 10 * time.Second
 
 func assert(err error) {
 	if err != nil {
@@ -48,16 +49,21 @@ func main() {
 	}
 	docker, err := dockerapi.NewClient(cfg.Docker.Endpoint)
 	assert(err)
+	docker.SetTimeout(dockerOperationTimeout)
+	eventDocker, err := dockerapi.NewClient(cfg.Docker.Endpoint)
+	assert(err)
 
 	swarmInfo := detectSwarmRuntime(docker)
 	resolver := newSwarmPortResolver(docker, swarmInfo, cfg.Runtime.AdvertiseMode, cfg.Runtime.AdvertiseIPOverride, cfg.Runtime.ManagerAPIPort, statusPort(cfg.Runtime.StatusAddr), cfg.Runtime.StatusToken)
 	if cfg.Discovery.Provider == "consul" {
 		consul.ConfigureRuntime(docker, consul.RuntimeConfig{
-			Mode:             cfg.Discovery.Mode,
-			Address:          cfg.Discovery.Address,
-			Port:             cfg.Discovery.Port,
-			ServiceName:      cfg.Discovery.ServiceName,
-			UseDockerResolve: cfg.Discovery.UseDockerResolve,
+			Mode:              cfg.Discovery.Mode,
+			Address:           cfg.Discovery.Address,
+			Port:              cfg.Discovery.Port,
+			ServiceName:       cfg.Discovery.ServiceName,
+			UseDockerResolve:  cfg.Discovery.UseDockerResolve,
+			RequireLocalAgent: cfg.Discovery.RequireLocalAgent,
+			LocalNodeAddress:  swarmInfo.NodeAddr,
 		})
 	}
 	b, err := bridge.New(docker, buildRegistryURI(cfg), bridge.Config{
@@ -98,7 +104,7 @@ func main() {
 	}).Info("runtime swarm status")
 
 	if cfg.Runtime.StatusAddr != "" {
-		go serveStatus(cfg.Runtime.StatusAddr, b, swarmInfo, docker, &eventsProcessed, &reconcileRuns, cfg.Runtime.StatusToken)
+		go serveStatus(cfg.Runtime.StatusAddr, b, swarmInfo, docker, &metrics, reconcileStaleAfter(cfg.Runtime.ResyncInterval), cfg.Runtime.StatusToken)
 	}
 
 	attempt := 0
@@ -113,9 +119,11 @@ func main() {
 
 		err = b.Ping()
 		if err == nil {
+			metrics.setBackendReady(true)
 			log.Printf("Connected to backend (%v/%v)", attempt+1, retryTotal)
 			break
 		}
+		metrics.setBackendReady(false)
 		log.Printf("Backend ping failed (%v/%v): %v", attempt+1, retryTotal, err)
 
 		if err != nil && attempt == retryAttempts {
@@ -127,12 +135,11 @@ func main() {
 	}
 
 	// Start event listener before listing containers to avoid missing anything
-	events := make(chan *dockerapi.APIEvents)
-	assert(docker.AddEventListener(events))
+	events := make(chan *dockerapi.APIEvents, 256)
+	assert(eventDocker.AddEventListener(events))
 	log.Println("Listening for Docker events ...")
 
-	b.Sync(false)
-	atomic.AddUint64(&reconcileRuns, 1)
+	metrics.reconcile(b, false)
 
 	quit := make(chan struct{})
 
@@ -161,8 +168,7 @@ func main() {
 			for {
 				select {
 				case <-resyncTicker.C:
-					b.Sync(true)
-					atomic.AddUint64(&reconcileRuns, 1)
+					metrics.reconcile(b, true)
 				case <-quit:
 					resyncTicker.Stop()
 					return
@@ -173,18 +179,18 @@ func main() {
 
 	// Process Docker events
 	for msg := range events {
-		atomic.AddUint64(&eventsProcessed, 1)
+		atomic.AddUint64(&metrics.eventsProcessed, 1)
 		switch msg.Status {
 		case "start":
-			go b.Add(msg.ID)
+			b.Add(msg.ID)
 		case "die":
-			go b.RemoveOnExit(msg.ID)
+			b.RemoveOnExit(msg.ID)
 		case "stop", "pause", "destroy":
-			go b.Remove(msg.ID)
+			b.Remove(msg.ID)
 		case "unpause", "health_status: healthy", "health_status:healthy":
-			go b.Add(msg.ID)
+			b.Add(msg.ID)
 		case "health_status: unhealthy", "health_status:unhealthy":
-			go b.RemoveOnExit(msg.ID)
+			b.RemoveOnExit(msg.ID)
 		}
 	}
 

@@ -1,0 +1,72 @@
+version: "3.9"
+
+services:
+  consul-agent-test:
+    image: hashicorp/consul:1.21.5@sha256:6126c30072690cb3173a450ff5bde120c3a01e11c9dccab83b1b2314d4c828bd
+    command:
+      - consul
+      - agent
+      - -config-dir=/consul/config
+      - -advertise=100.101.1.1
+      - -advertise-wan=100.101.1.1
+      - -node=agent-node-1
+    environment:
+      SERVICE_IGNORE: "true"
+    labels:
+      consul.agent: "true"
+    networks:
+      - dokploy-network
+    volumes:
+      - consul-agent-data:/consul/data
+      - type: bind
+        source: /opt/config-share/consul-agent-config.hcl
+        target: /consul/config/consul.hcl
+        read_only: true
+    ports:
+      - target: 8311
+        published: 8311
+        protocol: tcp
+        mode: host
+      - target: 8311
+        published: 8311
+        protocol: udp
+        mode: host
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          consul members -status=alive |
+          awk '$$1=="agent-node-1" && $$3=="alive" && $$4=="client" { agent=1 }
+          $$3=="alive" && $$4=="server" { server=1 }
+          END { exit !(agent && server) }'
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname == vps-ff66b1eb
+          - node.labels.consul_agent_swarm == true
+      restart_policy:
+        condition: any
+        delay: 5s
+        window: 30s
+      update_config:
+        parallelism: 1
+        order: stop-first
+        failure_action: rollback
+        monitor: 60s
+      rollback_config:
+        parallelism: 1
+        order: stop-first
+        monitor: 60s
+
+networks:
+  dokploy-network:
+    external: true
+
+volumes:
+  consul-agent-data:
+    external: true
